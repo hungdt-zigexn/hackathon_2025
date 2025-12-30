@@ -38,6 +38,8 @@ class SpellEngine:
         self.leviosa_state = 'idle'  # idle, grounded, floating
         self.leviosa_object_pos = None
         self.leviosa_hover_offset = 0.0
+        self.leviosa_follow_finger = False
+        self.leviosa_reached_target = False
         
         # EXPECTO_PATRONUM spell state
         self.patronum_path: List[Tuple[int, int]] = []
@@ -73,6 +75,7 @@ class SpellEngine:
             bottom_y = self.frame_height - 50
             self.leviosa_object_pos = (center_x, bottom_y)
             self.leviosa_hover_offset = 0.0
+            self.leviosa_reached_target = False  # Reset flag when setting up scene
             # For Leviosa, we need spell_active=True to show the grounded box
             self.spell_active = True
         else:
@@ -110,6 +113,7 @@ class SpellEngine:
         if spell_type == SpellType.WINGARDIUM_LEVIOSA:
             # Trigger float animation
             self.leviosa_state = 'floating'
+            self.leviosa_follow_finger = True
         elif spell_type == SpellType.EXPECTO_PATRONUM:
             # Initialize EXPECTO_PATRONUM recording state
             self.patronum_path = []
@@ -153,26 +157,30 @@ class SpellEngine:
         
         if self.current_spell == SpellType.WINGARDIUM_LEVIOSA and self.leviosa_object_pos:
             if self.leviosa_state == 'floating':
-                # Move up until we reach target height (e.g., 1/3 of screen)
                 target_y = self.frame_height // 3
                 current_x, current_y = self.leviosa_object_pos
-                
-                # Rising speed
-                rise_speed = 100 * dt # pixels per second
-                
-                if current_y > target_y:
-                    current_y -= rise_speed
-                
+                box_margin, rise_speed, lerp_factor = 30, 100 * dt, 0.15
+
+                # Phase 1: Rise to target height
+                if not self.leviosa_reached_target:
+                    if current_y > target_y:
+                        current_y = max(target_y, current_y - rise_speed)
+                    if current_y <= target_y:
+                        current_y = target_y
+                        self.leviosa_reached_target = True
+                        print(f"[DEBUG] Leviosa reached target_y={target_y}")
+                    current_x = self.frame_width // 2
+
+                # Phase 2: Follow finger tip after reaching target
+                elif self.leviosa_follow_finger and wand_pixel:
+                    target_x = max(box_margin, min(wand_pixel[0], self.frame_width - box_margin))
+                    target_y_pos = max(box_margin, min(wand_pixel[1], self.frame_height - box_margin))
+                    current_x += (target_x - current_x) * lerp_factor
+                    current_y += (target_y_pos - current_y) * lerp_factor
+
                 # Hover animation
                 self.leviosa_hover_offset = math.sin(self.animation_time * 2.0) * 10
-                
-                # If tracking wand, could pull towards wand x
-                # For now, keep simple vertical rise + hover
-                
-                self.leviosa_object_pos = (
-                    current_x,
-                    int(current_y)
-                )
+                self.leviosa_object_pos = (int(current_x), int(current_y))
             elif self.leviosa_state == 'grounded':
                 # Ensure it stays at bottom (in case of resize)
                 self.leviosa_object_pos = (
@@ -443,7 +451,7 @@ class SpellEngine:
         else:
             background[y_start:y_end, x_start:x_end] = fg_crop
     
-    def draw_wand(self, frame: np.ndarray, wand_tip: Optional[Tuple[int, int]], 
+    def draw_wand(self, frame: np.ndarray, wand_tip: Optional[Tuple[int, int]],
                   wand_base: Optional[Tuple[int, int]] = None) -> Tuple[np.ndarray, Optional[Tuple[int, int]]]:
         """
         Draw virtual wand on frame using programmatic drawing.
@@ -564,7 +572,7 @@ class SpellEngine:
         handle_pts = handle_pts.reshape((-1, 1, 2))
         
         # Draw handle overlay
-        cv2.fillPoly(frame, [handle_pts], (40, 70, 110)) 
+        cv2.fillPoly(frame, [handle_pts], (40, 70, 110))
         cv2.polylines(frame, [handle_pts], True, (60, 90, 140), 2, cv2.LINE_AA)
         
         # Draw tip highlight
