@@ -6,8 +6,8 @@ import numpy as np
 from typing import Optional, Tuple, List
 from enum import Enum
 import math
-import time
-import os
+
+from .spells import LumosSpell, WingardiumLeviosaSpell, ExpectoPatronumSpell
 
 
 class SpellType(Enum):
@@ -32,24 +32,25 @@ class SpellEngine:
         self.frame_height = frame_height
         self.current_spell: Optional[SpellType] = None
         self.spell_active = False
-        self.animation_time = 0.0
         
-        # Animation state
-        self.leviosa_state = 'idle'  # idle, grounded, floating
-        self.leviosa_object_pos = None
-        self.leviosa_hover_offset = 0.0
-        self.leviosa_follow_finger = False
-        self.leviosa_reached_target = False
+        # Initialize spell instances
+        self.lumos = LumosSpell(frame_width, frame_height)
+        self.wingardium_leviosa = WingardiumLeviosaSpell(frame_width, frame_height)
+        self.expecto_patronum = ExpectoPatronumSpell(frame_width, frame_height)
         
-        # EXPECTO_PATRONUM spell state
-        self.patronum_path: List[Tuple[int, int]] = []
-        self.recording_start_time: Optional[float] = None
-        self.identification_pending: bool = False
-        self.identified_object: Optional[str] = None
-        self.patronum_image: Optional[np.ndarray] = None
-        self.patronum_model_rotation: float = 0.0
-        self.patronum_model_position: Optional[Tuple[int, int]] = None
-        
+        # Current active spell instance
+        self._active_spell_instance = None
+    
+    def _get_spell_instance(self, spell_type: SpellType):
+        """Get spell instance for given type."""
+        if spell_type == SpellType.LUMOS:
+            return self.lumos
+        elif spell_type == SpellType.WINGARDIUM_LEVIOSA:
+            return self.wingardium_leviosa
+        elif spell_type == SpellType.EXPECTO_PATRONUM:
+            return self.expecto_patronum
+        return None
+    
     def setup_spell_scene(self, spell_type: SpellType):
         """
         Setup the visual scene for a spell (before activation).
@@ -59,29 +60,16 @@ class SpellEngine:
         """
         print(f"[DEBUG] setup_spell_scene called: spell_type={spell_type}")
         self.current_spell = spell_type
-        self.animation_time = 0.0
+        spell_instance = self._get_spell_instance(spell_type)
         
-        # Reset specific spell states
-        if spell_type == SpellType.EXPECTO_PATRONUM:
-            self.recording_start_time = None
-            self.patronum_path = []
-            self.identified_object = None
-            self.patronum_image = None
-        
-        if spell_type == SpellType.WINGARDIUM_LEVIOSA:
-            # Start object at bottom center
-            self.leviosa_state = 'grounded'
-            center_x = self.frame_width // 2
-            bottom_y = self.frame_height - 50
-            self.leviosa_object_pos = (center_x, bottom_y)
-            self.leviosa_hover_offset = 0.0
-            self.leviosa_reached_target = False  # Reset flag when setting up scene
-            # For Leviosa, we need spell_active=True to show the grounded box
-            self.spell_active = True
-        else:
-            # For other spells (Lumos, Cursor), wait for activation to show effects
-            self.spell_active = False
-
+        if spell_instance:
+            spell_instance.setup_scene()
+            # For Wingardium Leviosa, we need spell_active=True to show the grounded object
+            if spell_type == SpellType.WINGARDIUM_LEVIOSA:
+                self.spell_active = True
+            else:
+                self.spell_active = False
+    
     def activate_spell(self, spell_type: SpellType, wand_pos: Optional[Tuple[float, float]] = None):
         """
         Activate a spell effect.
@@ -94,42 +82,22 @@ class SpellEngine:
         self.current_spell = spell_type
         self.spell_active = True
         
-        # If it's a new spell activation (not just scene setup), reset time
-        if spell_type != SpellType.WINGARDIUM_LEVIOSA or self.leviosa_state == 'idle':
-             self.animation_time = 0.0
-
+        spell_instance = self._get_spell_instance(spell_type)
+        if spell_instance:
+            spell_instance.activate(wand_pos)
+            self._active_spell_instance = spell_instance
+        
         print(f"[DEBUG] Spell activated: spell_active={self.spell_active}, current_spell={self.current_spell}")
-        
-        # Default to center if no wand position provided
-        if wand_pos is None:
-            wand_pos = (0.5, 0.5)
-        
-        # Convert normalized to pixel coordinates if needed
-        wand_pixel = (
-            int(wand_pos[0] * self.frame_width) if wand_pos[0] <= 1.0 else int(wand_pos[0]),
-            int(wand_pos[1] * self.frame_height) if wand_pos[1] <= 1.0 else int(wand_pos[1])
-        )
-        
-        if spell_type == SpellType.WINGARDIUM_LEVIOSA:
-            # Trigger float animation
-            self.leviosa_state = 'floating'
-            self.leviosa_follow_finger = True
-        elif spell_type == SpellType.EXPECTO_PATRONUM:
-            # Initialize EXPECTO_PATRONUM recording state
-            self.patronum_path = []
-            self.recording_start_time = time.time()
-            self.identification_pending = False
-            self.identified_object = None
-            self.patronum_image = None
-            self.patronum_model_rotation = 0.0
-            self.patronum_model_position = None
     
     def deactivate_spell(self):
         """Deactivate current spell."""
         print(f"[DEBUG] deactivate_spell called")
         self.spell_active = False
         self.current_spell = None
-        self.leviosa_state = 'idle'
+        
+        if self._active_spell_instance:
+            self._active_spell_instance.deactivate()
+            self._active_spell_instance = None
     
     def update(self, dt: float, wand_pos: Optional[Tuple[float, float]] = None):
         """
@@ -142,87 +110,21 @@ class SpellEngine:
         if not self.spell_active or self.current_spell is None:
             return
         
-        self.animation_time += dt
-        
-        # Convert wand position to pixel coordinates if provided
-        wand_pixel = None
-        if wand_pos:
-            if wand_pos[0] <= 1.0 and wand_pos[1] <= 1.0:
-                wand_pixel = (
-                    int(wand_pos[0] * self.frame_width),
-                    int(wand_pos[1] * self.frame_height)
-                )
-            else:
-                wand_pixel = (int(wand_pos[0]), int(wand_pos[1]))
-        
-        if self.current_spell == SpellType.WINGARDIUM_LEVIOSA and self.leviosa_object_pos:
-            if self.leviosa_state == 'floating':
-                target_y = self.frame_height // 3
-                current_x, current_y = self.leviosa_object_pos
-                box_margin, rise_speed, lerp_factor = 30, 100 * dt, 0.15
-
-                # Phase 1: Rise to target height
-                if not self.leviosa_reached_target:
-                    if current_y > target_y:
-                        current_y = max(target_y, current_y - rise_speed)
-                    if current_y <= target_y:
-                        current_y = target_y
-                        self.leviosa_reached_target = True
-                        print(f"[DEBUG] Leviosa reached target_y={target_y}")
-                    current_x = self.frame_width // 2
-
-                # Phase 2: Follow finger tip after reaching target
-                elif self.leviosa_follow_finger and wand_pixel:
-                    target_x = max(box_margin, min(wand_pixel[0], self.frame_width - box_margin))
-                    target_y_pos = max(box_margin, min(wand_pixel[1], self.frame_height - box_margin))
-                    current_x += (target_x - current_x) * lerp_factor
-                    current_y += (target_y_pos - current_y) * lerp_factor
-
-                # Hover animation
-                self.leviosa_hover_offset = math.sin(self.animation_time * 2.0) * 10
-                self.leviosa_object_pos = (int(current_x), int(current_y))
-            elif self.leviosa_state == 'grounded':
-                # Ensure it stays at bottom (in case of resize)
-                self.leviosa_object_pos = (
-                    self.frame_width // 2,
-                    self.frame_height - 50
-                )
-        elif self.current_spell == SpellType.EXPECTO_PATRONUM:
-            # EXPECTO_PATRONUM spell logic
-            if self.recording_start_time is not None:
-                elapsed = time.time() - self.recording_start_time
-
-                # Recording phase: first 5 seconds
-                if elapsed < 5.0:
-                    # Record wand tip positions
-                    if wand_pixel:
-                        self.patronum_path.append(wand_pixel)
-                # After 5 seconds, trigger identification
-                elif not self.identification_pending and self.identified_object is None:
-                    self.identification_pending = True
-                    # Set position for model display (center of path or last position)
-                    if self.patronum_path:
-                        # Use center of bounding box of path
-                        xs = [p[0] for p in self.patronum_path]
-                        ys = [p[1] for p in self.patronum_path]
-                        if xs and ys:
-                            self.patronum_model_position = (
-                                int(sum(xs) / len(xs)),
-                                int(sum(ys) / len(ys))
-                            )
-                    else:
-                        self.patronum_model_position = wand_pixel if wand_pixel else (self.frame_width // 2, self.frame_height // 2)
-
-            # Display phase: animate 3D model rotation
-            if self.identified_object and self.patronum_image is not None:
-                self.patronum_model_rotation += dt * 1.0  # Rotate 1 radian per second
+        spell_instance = self._get_spell_instance(self.current_spell)
+        if spell_instance:
+            spell_instance.update(dt, wand_pos)
     
     def update_frame_size(self, width: int, height: int):
         """Update frame dimensions."""
         self.frame_width = width
         self.frame_height = height
-
-    def draw_effects(self, frame: np.ndarray, wand_pos: Optional[Tuple[int, int]] = None) -> np.ndarray:
+        
+        # Update all spell instances
+        self.lumos.update_frame_size(width, height)
+        self.wingardium_leviosa.update_frame_size(width, height)
+        self.expecto_patronum.update_frame_size(width, height)
+    
+    def draw_effects(self, frame: np.ndarray, wand_pos: Optional[Tuple[float, float]] = None) -> np.ndarray:
         """
         Draw spell effects on frame.
         
@@ -233,131 +135,86 @@ class SpellEngine:
         Returns:
             Frame with effects drawn
         """
-        # Debug: print every ~30 frames to avoid spam
-        if hasattr(self, '_debug_frame_count'):
-            self._debug_frame_count += 1
-        else:
-            self._debug_frame_count = 0
-        
-        should_debug = (self._debug_frame_count % 30 == 0)
-        
-        if should_debug:
-            print(f"[DEBUG] draw_effects: spell_active={self.spell_active}, current_spell={self.current_spell}, wand_pos={wand_pos}")
-        
         if not self.spell_active or self.current_spell is None:
             return frame
         
-        # Convert normalized wand_pos to pixel coordinates if needed
-        if wand_pos:
-            if wand_pos[0] <= 1.0 and wand_pos[1] <= 1.0:
-                # Normalized coordinates
-                wand_pixel = (
-                    int(wand_pos[0] * self.frame_width),
-                    int(wand_pos[1] * self.frame_height)
-                )
-            else:
-                # Already pixel coordinates
-                wand_pixel = (int(wand_pos[0]), int(wand_pos[1]))
-        else:
-            wand_pixel = None
-        
-        if should_debug:
-            print(f"[DEBUG] draw_effects after conversion: wand_pixel={wand_pixel}")
-        
-        if self.current_spell == SpellType.LUMOS:
-            # Draw glowing circle at wand tip
-            if wand_pixel:
-                # Increased base radius and amplitude for bigger, more dynamic glow
-                glow_radius = int(30 + 10 * math.sin(self.animation_time * 5.0))
-                if should_debug:
-                    print(f"[DEBUG] Drawing LUMOS glow at {wand_pixel} with radius {glow_radius}")
-                
-                # Draw multiple layers for a more intense, brighter glow effect
-                # Outer glow layer (largest, most transparent)
-                cv2.circle(frame, wand_pixel, glow_radius + 20, (255, 255, 150), -1)
-                # Middle glow layer
-                cv2.circle(frame, wand_pixel, glow_radius + 10, (255, 255, 200), -1)
-                # Inner bright core (pure white)
-                cv2.circle(frame, wand_pixel, glow_radius, (255, 255, 255), -1)
-                # Bright outer ring for extra visibility
-                cv2.circle(frame, wand_pixel, glow_radius + 15, (255, 255, 180), 3)
-            elif should_debug:
-                print(f"[DEBUG] LUMOS spell active but wand_pixel is None - cannot draw glow")
-        
-        elif self.current_spell == SpellType.WINGARDIUM_LEVIOSA:
-            # Draw box object
-            if self.leviosa_object_pos:
-                box_size = 60
-                x, y = int(self.leviosa_object_pos[0]), int(self.leviosa_object_pos[1])
-                
-                # Add hover offset if floating
-                if self.leviosa_state == 'floating':
-                    y += int(self.leviosa_hover_offset)
-                
-                # Draw a crate-like box
-                # Main box body
-                top_left = (x - box_size//2, y - box_size//2)
-                bottom_right = (x + box_size//2, y + box_size//2)
-                
-                # Fill - brown wood color
-                cv2.rectangle(frame, top_left, bottom_right, (30, 70, 110), -1)
-                
-                # Border - lighter wood
-                cv2.rectangle(frame, top_left, bottom_right, (50, 90, 130), 3)
-                
-                # Cross pattern
-                cv2.line(frame, top_left, bottom_right, (40, 80, 120), 2)
-                cv2.line(frame, (x + box_size//2, y - box_size//2), (x - box_size//2, y + box_size//2), (40, 80, 120), 2)
-                
-                # Inner border
-                inset = 5
-                cv2.rectangle(frame, (top_left[0]+inset, top_left[1]+inset), (bottom_right[0]-inset, bottom_right[1]-inset), (45, 85, 125), 1)
-
-        elif self.current_spell == SpellType.EXPECTO_PATRONUM:
-            # EXPECTO_PATRONUM spell drawing
-            if self.recording_start_time is not None:
-                elapsed = time.time() - self.recording_start_time
-
-                # Recording phase: draw path
-                if elapsed < 5.0:
-                    if len(self.patronum_path) > 1:
-                        # Draw polyline path with silver/blue glow
-                        pts = np.array(self.patronum_path, np.int32)
-                        cv2.polylines(frame, [pts], False, (255, 200, 150), 3, cv2.LINE_AA)
-                        # Draw current point
-                        if self.patronum_path:
-                            cv2.circle(frame, self.patronum_path[-1], 5, (255, 200, 150), -1)
-
-                # Display phase: render image
-                if self.identified_object and self.patronum_image is not None and self.patronum_model_position:
-                    # Draw the image
-                    x, y = self.patronum_model_position
-                    h, w = self.patronum_image.shape[:2]
-
-                    # Calculate top-left position
-                    top_left_x = int(x - w / 2)
-                    top_left_y = int(y - h / 2)
-
-                    # Handle overlay with alpha channel
-                    self._overlay_image(frame, self.patronum_image, top_left_x, top_left_y)
-
-                    # Draw object name
-                    text = self.identified_object.capitalize()
-                    font = cv2.FONT_HERSHEY_SIMPLEX
-                    font_scale = 1.5
-                    thickness = 3
-                    text_size = cv2.getTextSize(text, font, font_scale, thickness)[0]
-
-                    # Position text above the object
-                    text_x = int(x - text_size[0] / 2)
-                    text_y = int(y - h / 2 - 20) # Above object with padding
-
-                    # Draw text outline (black) for better visibility
-                    cv2.putText(frame, text, (text_x, text_y), font, font_scale, (0, 0, 0), thickness + 2, cv2.LINE_AA)
-                    # Draw text (white)
-                    cv2.putText(frame, text, (text_x, text_y), font, font_scale, (255, 255, 255), thickness, cv2.LINE_AA)
+        spell_instance = self._get_spell_instance(self.current_spell)
+        if spell_instance:
+            return spell_instance.draw(frame, wand_pos)
         
         return frame
+    
+    # Backward compatibility properties for Wingardium Leviosa
+    @property
+    def leviosa_state(self):
+        """Get leviosa state."""
+        return self.wingardium_leviosa.state
+    
+    @property
+    def leviosa_object_pos(self):
+        """Get leviosa object position."""
+        return self.wingardium_leviosa.object_pos
+    
+    @property
+    def leviosa_hover_offset(self):
+        """Get leviosa hover offset."""
+        return self.wingardium_leviosa.hover_offset
+    
+    @property
+    def leviosa_follow_finger(self):
+        """Get leviosa follow finger flag."""
+        return self.wingardium_leviosa.follow_finger
+    
+    @property
+    def leviosa_reached_target(self):
+        """Get leviosa reached target flag."""
+        return self.wingardium_leviosa.reached_target
+    
+    # Backward compatibility properties for Expecto Patronum
+    @property
+    def patronum_path(self):
+        """Get patronum path."""
+        return self.expecto_patronum.path
+    
+    @property
+    def recording_start_time(self):
+        """Get recording start time."""
+        return self.expecto_patronum.recording_start_time
+    
+    @property
+    def identification_pending(self):
+        """Get identification pending flag."""
+        return self.expecto_patronum.identification_pending
+    
+    @identification_pending.setter
+    def identification_pending(self, value):
+        """Set identification pending flag."""
+        self.expecto_patronum.identification_pending = value
+    
+    @property
+    def identified_object(self):
+        """Get identified object."""
+        return self.expecto_patronum.identified_object
+    
+    @identified_object.setter
+    def identified_object(self, value):
+        """Set identified object."""
+        self.expecto_patronum.identified_object = value
+    
+    @property
+    def patronum_image(self):
+        """Get patronum image."""
+        return self.expecto_patronum.image
+    
+    @property
+    def patronum_model_rotation(self):
+        """Get patronum model rotation."""
+        return self.expecto_patronum.model_rotation
+    
+    @property
+    def patronum_model_position(self):
+        """Get patronum model position."""
+        return self.expecto_patronum.model_position
     
     def load_patronum_model(self, object_name: str) -> bool:
         """
@@ -369,87 +226,7 @@ class SpellEngine:
         Returns:
             True if image loaded successfully, False otherwise
         """
-        # Try different extensions
-        extensions = ['.png', '.jpg', '.jpeg']
-        image_path = None
-
-        for ext in extensions:
-            path = os.path.join(os.getcwd(), "assets", "images", f"{object_name}{ext}")
-            if os.path.exists(path):
-                image_path = path
-                break
-
-        if not image_path:
-            print(f"Image file not found for object: {object_name}")
-            return False
-
-        try:
-            # Load image with alpha channel if possible
-            image = cv2.imread(image_path, cv2.IMREAD_UNCHANGED)
-
-            if image is None:
-                print(f"Failed to load image: {image_path}")
-                return False
-
-            # Resize to reasonable size (max dimension ~300px)
-            h, w = image.shape[:2]
-            max_dim = max(h, w)
-            if max_dim > 300:
-                scale = 300.0 / max_dim
-                new_w = int(w * scale)
-                new_h = int(h * scale)
-                image = cv2.resize(image, (new_w, new_h), interpolation=cv2.INTER_AREA)
-
-            self.patronum_image = image
-            print(f"Loaded image: {object_name}")
-            return True
-        except Exception as e:
-            print(f"Error loading image {object_name}: {e}")
-            return False
-    
-    def _overlay_image(self, background: np.ndarray, foreground: np.ndarray, x: int, y: int) -> None:
-        """
-        Overlay a foreground image onto a background image at (x, y) handling alpha channel.
-        
-        Args:
-            background: Background image (BGR) - modified in place
-            foreground: Foreground image (BGRA or BGR)
-            x: Top-left x coordinate
-            y: Top-left y coordinate
-        """
-        h_fg, w_fg = foreground.shape[:2]
-        h_bg, w_bg = background.shape[:2]
-        
-        if x >= w_bg or y >= h_bg:
-            return
-            
-        # Crop foreground if it goes outside background
-        x_start = max(0, x)
-        y_start = max(0, y)
-        x_end = min(w_bg, x + w_fg)
-        y_end = min(h_bg, y + h_fg)
-        
-        # Calculate source coordinates
-        fg_x_start = x_start - x
-        fg_y_start = y_start - y
-        fg_x_end = fg_x_start + (x_end - x_start)
-        fg_y_end = fg_y_start + (y_end - y_start)
-        
-        if fg_x_end <= fg_x_start or fg_y_end <= fg_y_start:
-            return
-            
-        fg_crop = foreground[fg_y_start:fg_y_end, fg_x_start:fg_x_end]
-        bg_crop = background[y_start:y_end, x_start:x_end]
-        
-        # Check if foreground has alpha channel
-        if fg_crop.shape[2] == 4:
-            alpha = fg_crop[:, :, 3] / 255.0
-            alpha_inv = 1.0 - alpha
-            
-            for c in range(3):
-                bg_crop[:, :, c] = (alpha * fg_crop[:, :, c] + alpha_inv * bg_crop[:, :, c])
-        else:
-            background[y_start:y_end, x_start:x_end] = fg_crop
+        return self.expecto_patronum.load_model(object_name)
     
     def draw_wand(self, frame: np.ndarray, wand_tip: Optional[Tuple[int, int]],
                   wand_base: Optional[Tuple[int, int]] = None) -> Tuple[np.ndarray, Optional[Tuple[int, int]]]:
@@ -501,8 +278,6 @@ class SpellEngine:
         uy = dy / original_length
         
         # Extend wand length (make it visually longer)
-        # The original length is just the finger length (base to tip)
-        # We extend it to look like a real wand
         extended_length = original_length * 5.0
         
         # Recalculate tip pixel based on extended length
@@ -523,13 +298,11 @@ class SpellEngine:
         width_tip = 10
         
         # Calculate polygon corners
-        # Base corners
         b1x = base_pixel[0] + px * width_base
         b1y = base_pixel[1] + py * width_base
         b2x = base_pixel[0] - px * width_base
         b2y = base_pixel[1] - py * width_base
         
-        # Tip corners
         t1x = tip_pixel[0] + px * width_tip
         t1y = tip_pixel[1] + py * width_tip
         t2x = tip_pixel[0] - px * width_tip
@@ -545,17 +318,16 @@ class SpellEngine:
         pts = pts.reshape((-1, 1, 2))
         
         # Draw wand body (dark brown)
-        cv2.fillPoly(frame, [pts], (30, 50, 90)) # BGR: Dark Brown
+        cv2.fillPoly(frame, [pts], (30, 50, 90))
         
         # Draw wand border (lighter brown)
         cv2.polylines(frame, [pts], True, (50, 80, 120), 2, cv2.LINE_AA)
         
-        # Draw handle detail (lighter grip at base)
+        # Draw handle detail
         handle_len = length * 0.25
         hx = base_pixel[0] + ux * handle_len
         hy = base_pixel[1] + uy * handle_len
         
-        # Interpolate width at handle end
         width_handle = width_base - ((width_base - width_tip) * 0.25)
         
         h1x = hx + px * width_handle
@@ -579,4 +351,3 @@ class SpellEngine:
         cv2.circle(frame, tip_pixel, 5, (200, 200, 200), -1)
         
         return frame, tip_pixel
-
