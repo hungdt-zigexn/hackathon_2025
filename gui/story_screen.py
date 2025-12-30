@@ -1,0 +1,458 @@
+import os
+from PyQt6.QtWidgets import (
+    QWidget, QVBoxLayout, QHBoxLayout, QPushButton, 
+    QLabel, QMessageBox, QProgressBar
+)
+from PyQt6.QtCore import Qt, QTimer, pyqtSignal
+from PyQt6.QtGui import QFont
+
+from core.voice_verifier import VoiceVerifier
+from core.story_manager import StoryManager, StoryStepType
+from core.spell_engine import SpellType
+from gui.camera_widget import CameraWidget
+from gui.utils import SpellVerificationThread
+
+class StoryScreen(QWidget):
+    """Game screen handling the storyline and spell casting."""
+    
+    finished = pyqtSignal()  # Signal when game is completed or exited
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.story_manager = StoryManager()
+        self.voice_verifier: VoiceVerifier = None
+        self.verification_thread: SpellVerificationThread = None
+        self.is_listening = False
+        self.level_completed = False
+        self.game_active = False
+        self.auto_retry_timer = QTimer(self)
+        self.auto_retry_timer.setSingleShot(True)
+        self.auto_retry_timer.timeout.connect(self.start_listening)
+
+        self.success_timer = QTimer(self)
+        self.success_timer.setSingleShot(True)
+        self.success_timer.timeout.connect(self.next_level)
+        
+        self.retry_count = 0
+        self.init_ui()
+        
+    def set_status_message(self, text: str, style_type: str = "info"):
+        """
+        Update status label with consistent styling.
+        style_type: 'info', 'listening', 'success', 'error'
+        """
+        base_style = """
+            QLabel {
+                padding: 15px;
+                border-radius: 10px;
+                font-size: 18px;
+                font-weight: bold;
+                border: 2px solid;
+            }
+        """
+        
+        styles = {
+            "info": """
+                background-color: #2c3e50;
+                color: #ecf0f1;
+                border-color: #34495e;
+            """,
+            "listening": """
+                background-color: #f39c12;
+                color: #ffffff;
+                border-color: #e67e22;
+            """,
+            "success": """
+                background-color: #27ae60;
+                color: #ffffff;
+                border-color: #2ecc71;
+            """,
+            "error": """
+                background-color: #c0392b;
+                color: #ffffff;
+                border-color: #e74c3c;
+            """,
+            "validating": """
+                background-color: #8e44ad;
+                color: #ffffff;
+                border-color: #9b59b6;
+            """
+        }
+        
+        specific_style = styles.get(style_type, styles["info"])
+        self.status_label.setStyleSheet(base_style + specific_style)
+        self.status_label.setText(text)
+
+    def init_ui(self):
+        layout = QVBoxLayout()
+        layout.setSpacing(15)
+        layout.setContentsMargins(20, 20, 20, 20)
+        
+        # Header: Level Title
+        self.title_label = QLabel("")
+        self.title_label.setFont(QFont("Arial", 20, QFont.Weight.Bold))
+        self.title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(self.title_label)
+        
+        # Narrative Text
+        self.story_text = QLabel("")
+        self.story_text.setFont(QFont("Arial", 14))
+        self.story_text.setWordWrap(True)
+        self.story_text.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.story_text.setStyleSheet("background-color: #f8f9fa; padding: 15px; border-radius: 10px;")
+        layout.addWidget(self.story_text)
+        
+        # Camera Feed
+        self.camera_widget = CameraWidget()
+        self.camera_widget.spell_identified.connect(self.on_patronum_identified)
+        layout.addWidget(self.camera_widget)
+        
+        # Status/Instruction Bar
+        self.status_label = QLabel("Hãy đọc phép thuật khi bạn sẵn sàng")
+        self.status_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.status_label.setWordWrap(True)
+        self.set_status_message("Hãy đọc phép thuật khi bạn sẵn sàng", "info")
+        layout.addWidget(self.status_label)
+        
+        # Progress Bar (for recording duration)
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setTextVisible(False)
+        self.progress_bar.setFixedHeight(5)
+        self.progress_bar.setRange(0, 1)
+        self.progress_bar.setValue(0)
+        self.progress_bar.setStyleSheet("QProgressBar { background: #e0e0e0; border: none; } QProgressBar::chunk { background: #28a745; }")
+        layout.addWidget(self.progress_bar)
+        
+        # Button Style
+        button_style = """
+            QPushButton {
+                background-color: #5e1a1a;
+                color: #f8f9fa;
+                border-radius: 12px;
+                border: 2px solid #f8f9fa;
+                padding: 10px 20px;
+                font-weight: bold;
+                font-size: 16px;
+            }
+            QPushButton:hover {
+                background-color: #782020;
+            }
+            QPushButton:pressed {
+                background-color: #441313;
+            }
+            QPushButton:disabled {
+                background-color: #3d1111;
+                color: #aaaaaa;
+                border: 2px solid #aaaaaa;
+            }
+        """
+
+        # Hidden buttons for touch support if needed (primary interaction is voice)
+        self.controls_layout = QHBoxLayout()
+        self.exit_btn = QPushButton("Thoát")
+        self.exit_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.exit_btn.setStyleSheet(button_style)
+        self.exit_btn.clicked.connect(self.exit_game)
+        self.controls_layout.addWidget(self.exit_btn)
+        
+        self.next_btn = QPushButton("Next Level →")
+        self.next_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.next_btn.clicked.connect(self.on_control_clicked)
+        self.next_btn.setVisible(False)
+        self.next_btn.setStyleSheet(button_style)
+        self.controls_layout.addWidget(self.next_btn)
+        
+        layout.addLayout(self.controls_layout)
+        
+        self.setLayout(layout)
+        
+        # Keep focus for accessibility/keyboard shortcuts
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+
+    def on_control_clicked(self):
+        """Handle main control button click (Next/Start/Try Again)."""
+        if self.next_btn.text() == "Kết thúc":
+            self.exit_game()
+            return
+
+        step = self.story_manager.get_current_step()
+        if not step:
+            return
+
+        if self.level_completed or step.step_type == StoryStepType.EXPLANATION:
+            self.next_level()
+        else:
+            # Retry case for Practice steps
+            self.next_btn.setVisible(False)
+            self.start_listening()
+
+    def start_game(self):
+        """Initialize game state."""
+        self.story_manager.reset()
+        self.level_completed = False
+        self.is_listening = False
+        self.game_active = False
+        self.auto_retry_timer.stop()
+        self.success_timer.stop()
+        if self.verification_thread:
+            try:
+                self.verification_thread.finished.disconnect()
+            except:
+                pass
+            if self.verification_thread.isRunning():
+                self.verification_thread.wait(5000)
+            self.verification_thread.deleteLater()
+            self.verification_thread = None
+        
+        # Init voice verifier
+        try:
+            api_key = os.getenv('GOOGLE_API_KEY')
+            if not api_key:
+                QMessageBox.warning(self, "API Key Missing", "Please set GOOGLE_API_KEY environment variable.")
+                return
+            self.voice_verifier = VoiceVerifier(api_key=api_key)
+            self.camera_widget.start_camera()
+            self.game_active = True
+            self.load_step()
+            self.setFocus()
+        except Exception as e:
+            QMessageBox.critical(self, "Lỗi", f"Không thể khởi động game: {str(e)}")
+
+    def load_step(self):
+        """Load current story step data."""
+        step = self.story_manager.get_current_step()
+        if not step:
+            return
+
+        self.title_label.setText(f"Chapter {step.id}: {step.title}")
+        self.story_text.setText(step.description)
+        self.level_completed = False
+        self.is_listening = False
+        self.retry_count = 0
+        self.auto_retry_timer.stop()
+        self.progress_bar.setRange(0, 1)
+        self.progress_bar.setValue(0)
+        self.success_timer.stop()
+
+        # Reset spell engine visuals between steps
+        if self.camera_widget.spell_engine:
+            self.camera_widget.spell_engine.deactivate_spell()
+            
+            # For practice steps, setup the scene (e.g., show Leviosa box)
+            if step.step_type == StoryStepType.PRACTICE and step.required_spell:
+                print(f"[DEBUG] Setting up scene for spell: {step.required_spell}")
+                self.camera_widget.spell_engine.setup_spell_scene(step.required_spell)
+
+        if step.step_type == StoryStepType.EXPLANATION:
+            spell_name = step.required_spell.value if step.required_spell else "phép thuật"
+            self.set_status_message(
+                f"Giới thiệu phép: học '{spell_name}' rồi nhấn Bắt đầu.",
+                "info"
+            )
+            self.next_btn.setText("Bắt đầu →")
+            self.next_btn.setVisible(True)
+            self.next_btn.setEnabled(True)
+        else:
+            spell_name = step.required_spell.value if step.required_spell else "phép thuật"
+            self.set_status_message(f"Hãy nói '{spell_name}' khi bạn sẵn sàng.", "info")
+            self.next_btn.setVisible(False)
+            # Start automatic listening shortly after practice step loads
+            self.schedule_spell_detection(delay_ms=1500)
+    
+    def schedule_spell_detection(self, delay_ms: int = 0):
+        """Start or schedule automatic spell detection."""
+        if (
+            not self.voice_verifier
+            or self.level_completed
+            or not self.game_active
+        ):
+            return
+        
+        self.auto_retry_timer.stop()
+        if delay_ms <= 0:
+            self.start_listening()
+        else:
+            self.auto_retry_timer.start(delay_ms)
+            
+    def start_listening(self):
+        if (
+            not self.voice_verifier
+            or self.is_listening
+            or self.level_completed
+            or not self.game_active
+        ):
+            return
+        
+        step = self.story_manager.get_current_step()
+        if not step or step.step_type != StoryStepType.PRACTICE:
+            return
+        
+        # Check for EXPECTO_PATRONUM spell to bypass verification
+        if step.required_spell == SpellType.EXPECTO_PATRONUM:
+            self.handle_patronum_sequence()
+            return
+        
+        self.auto_retry_timer.stop()
+        self.is_listening = True
+        spell_name = step.required_spell.value
+        self.set_status_message(f"Đang nghe '{spell_name}'... Hãy nói rõ ràng.", "listening")
+        self.progress_bar.setRange(0, 0)
+
+        is_retry = self.retry_count > 0
+        self.verification_thread = SpellVerificationThread(self.voice_verifier, spell_name, is_retry=is_retry)
+        self.verification_thread.recording_finished.connect(self.on_recording_finished)
+        self.verification_thread.verification_complete.connect(self.on_verification_complete)
+        self.verification_thread.start()
+
+    def handle_patronum_sequence(self):
+        """Handle the Expecto Patronum spell sequence (Wait -> Draw -> Identify)."""
+        self.auto_retry_timer.stop()
+        self.is_listening = True
+
+        # 1. Wait for user to speak (simulated)
+        self.set_status_message("Đang nghe 'Expecto Patronum'...", "listening")
+        QTimer.singleShot(2000, self.start_patronum_drawing)
+
+    def start_patronum_drawing(self):
+        """Start the drawing phase."""
+        if not self.game_active:
+            return
+
+        self.set_status_message("Vẽ Patronus của bạn bằng đũa phép! (5 giây)", "info")
+        self.progress_bar.setRange(0, 0) # Indeterminate
+
+        # Activate spell to start recording
+        self.camera_widget.get_spell_engine().activate_spell(SpellType.EXPECTO_PATRONUM)
+
+        # Schedule completion (UI update only, engine handles timing internally but good to sync)
+        QTimer.singleShot(5000, self.finish_patronum_drawing)
+
+    def finish_patronum_drawing(self):
+        """Drawing phase finished, waiting for identification."""
+        if not self.game_active:
+            return
+
+        self.set_status_message("Đang nhận diện Patronus của bạn...", "validating")
+
+    def on_patronum_identified(self, object_name: str):
+        """Handle successful Patronus identification."""
+        if not self.game_active:
+            return
+
+        # Only proceed if we are in the right step
+        step = self.story_manager.get_current_step()
+        if not step or step.required_spell != SpellType.EXPECTO_PATRONUM:
+            return
+            
+        # Treat as success
+        self.handle_practice_success(f"Bạn đã vẽ một {object_name}!")
+
+    def on_recording_finished(self):
+        """Called when audio recording is done, but verification is still in progress."""
+        self.set_status_message("Đang xác minh phép thuật...", "validating")
+
+    def on_verification_complete(self, is_correct: bool, feedback: str):
+        self.is_listening = False
+        self.progress_bar.setRange(0, 1)
+        self.progress_bar.setValue(0)
+        
+        # Don't delete the thread here - it's still running speak_feedback()
+        # Instead, connect to the finished signal for cleanup
+        if self.verification_thread:
+            self.verification_thread.finished.connect(self._cleanup_verification_thread)
+        
+        if not self.game_active:
+            return
+        
+        if is_correct:
+            self.handle_practice_success(feedback)
+        else:
+            self.retry_count += 1
+            retry_feedback = feedback or "Chưa chính xác lắm."
+            self.set_status_message(
+                f"{retry_feedback}\nNhấn 'Thử lại' để thử lần nữa.",
+                "error"
+            )
+            self.next_btn.setText("Thử lại")
+            self.next_btn.setVisible(True)
+            self.next_btn.setEnabled(True)
+            self.next_btn.setFocus()
+    
+    def _cleanup_verification_thread(self):
+        """Clean up the verification thread after it finishes."""
+        if self.verification_thread:
+            self.verification_thread.deleteLater()
+            self.verification_thread = None
+
+    def handle_practice_success(self, feedback: str):
+        self.level_completed = True
+        self.auto_retry_timer.stop()
+        self.is_listening = False
+        step = self.story_manager.get_current_step()
+        if not step:
+            return
+        
+        # Activate Visuals
+        print(f"[DEBUG STORY] handle_practice_success called, activating spell: {step.required_spell}")
+        # Avoid resetting EXPECTO_PATRONUM spell if it was just identified and is showing the model
+        if step.required_spell != SpellType.EXPECTO_PATRONUM:
+            self.camera_widget.get_spell_engine().activate_spell(step.required_spell, None)
+        
+        # Update UI
+        success_text = f"Thành công! {step.success_message}"
+        if feedback:
+            success_text = f"{success_text}\n{feedback}"
+        self.set_status_message(success_text, "success")
+
+        # Show Next button - wait for user to click Continue
+        if step.next_step_id:
+            self.next_btn.setText("Tiếp tục →")
+            self.next_btn.setVisible(True)
+            self.next_btn.setEnabled(True)
+            self.next_btn.setFocus()  # Move focus to next button
+            # No auto-advance - user must click Continue to proceed
+        else:
+            self.set_status_message("Chúc mừng! Bạn đã hoàn thành game!", "success")
+            self.next_btn.setText("Kết thúc")
+            self.next_btn.setVisible(True)
+            self.next_btn.setEnabled(True)
+            self.next_btn.setFocus()
+
+    def next_level(self):
+        self.auto_retry_timer.stop()
+        self.success_timer.stop()
+        
+        # Prevent skipping practice steps if not completed
+        step = self.story_manager.get_current_step()
+        if step and step.step_type == StoryStepType.PRACTICE and not self.level_completed:
+            return
+
+        self.is_listening = False
+        if self.story_manager.advance_step():
+            self.load_step()
+        
+    def exit_game(self):
+        self.game_active = False
+        self.auto_retry_timer.stop()
+        self.success_timer.stop()
+        if self.verification_thread:
+            # Disconnect any pending signals to avoid callbacks after cleanup
+            try:
+                self.verification_thread.finished.disconnect()
+            except:
+                pass
+            if self.verification_thread.isRunning():
+                self.verification_thread.wait(5000)  # Wait up to 5 seconds
+            self.verification_thread.deleteLater()
+            self.verification_thread = None
+        self.is_listening = False
+        self.camera_widget.stop_camera()
+        if self.voice_verifier:
+            self.voice_verifier.release()
+            self.voice_verifier = None
+        self.finished.emit()
+
+    def closeEvent(self, event):
+        self.exit_game()
+        super().closeEvent(event)
+
