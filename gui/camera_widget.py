@@ -181,16 +181,8 @@ class CameraThread(QThread):
                 visual_tip = wand_tip
 
             # Draw spell effects
-            # Use visual tip (extended wand) if available, otherwise use tracked tip
-            effect_pos = visual_tip if visual_tip else (wand_tip_normalized if landmarks else None)
-            
-            # Also pass visual tip to draw_effects if available to ensure effects align with wand
-            final_effect_pos = visual_tip_normalized = None
-            if visual_tip:
-                 # Convert back to normalized for draw_effects if it expects normalized (it handles both but prefers normalized for logic)
-                 final_effect_pos = (visual_tip[0] / w, visual_tip[1] / h)
-            elif extended_tip_normalized:
-                 final_effect_pos = extended_tip_normalized
+            # Use finger tip position directly (wand drawing removed)
+            final_effect_pos = wand_tip_normalized if landmarks else None
             
             frame = self.spell_engine.draw_effects(frame, final_effect_pos)
             
