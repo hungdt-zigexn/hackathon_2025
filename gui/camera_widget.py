@@ -305,15 +305,32 @@ class CameraThread(QThread):
         bbox = face_detection.bounding_box
         x, y = bbox.origin_x, bbox.origin_y
         box_w, box_h = bbox.width, bbox.height
+        h, w, _ = frame.shape
+        
+        # Adaptive hat size: face large (near camera) → hat smaller
+        # Calculate face ratio so với frame
+        face_ratio = max(box_w / w, box_h / h)
+        if face_ratio > 0.3:
+            hat_scale = 1.2 - (face_ratio - 0.3) * 1.5
+            hat_scale = max(0.75, hat_scale)
+        else:
+            hat_scale = 1.2
         
         # Calculate hat size
-        hat_width = int(box_w * 1.2)
+        hat_width = int(box_w * hat_scale)
         hat_height = int(hat_width * self.wizard_hat.shape[0] / self.wizard_hat.shape[1])
         
         # Calculate hat position (on top of head)
         hat_x = x - (hat_width - box_w) // 2
         head_top = y - int(box_h * 0.2)  # Estimate head top (face box starts at forehead)
-        hat_y = max(5, head_top - int(hat_height * 0.9))  # Place hat on head with slight overlap
+        hat_y = head_top - int(hat_height * 0.9)  # Place hat on head with slight overlap
+        
+        if hat_y + hat_height < 0:
+            hat_y = -int(hat_height * 0.3)
+        elif hat_y < 0:
+            pass
+        else:
+            hat_y = max(0, hat_y)
         
         # Resize and overlay
         resized_hat = cv2.resize(self.wizard_hat, (hat_width, hat_height), interpolation=cv2.INTER_AREA)
