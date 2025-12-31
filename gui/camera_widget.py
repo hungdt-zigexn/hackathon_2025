@@ -7,32 +7,10 @@ import os
 from PyQt6.QtWidgets import QLabel
 from PyQt6.QtCore import QThread, pyqtSignal, Qt
 from PyQt6.QtGui import QImage, QPixmap
-from typing import Optional
 from core.hand_tracking import HandTracker
 from core.spell_engine import SpellEngine, SpellType
-from core.object_identifier import ObjectIdentifier
 from gui.wizard_hat_overlay import WizardHatOverlay
 from gui.wand_tracker import WandTracker
-
-
-class IdentificationThread(QThread):
-    """Background thread for pattern identification."""
-    
-    identification_complete = pyqtSignal(str)  # Emits object name when done
-    
-    def __init__(self, object_identifier: ObjectIdentifier, pattern_image: np.ndarray):
-        super().__init__()
-        self.object_identifier = object_identifier
-        self.pattern_image = pattern_image.copy()  # Make a copy to avoid issues
-    
-    def run(self):
-        """Run identification in background."""
-        try:
-            object_name = self.object_identifier.identify_from_canvas(self.pattern_image)
-            self.identification_complete.emit(object_name)
-        except Exception as e:
-            print(f"Error in identification thread: {e}")
-            self.identification_complete.emit("wand")  # Default fallback
 
 
 class CameraThread(QThread):
@@ -41,19 +19,15 @@ class CameraThread(QThread):
     frame_ready = pyqtSignal(np.ndarray)
     # Removed spell_identified signal - no longer used
     
-    def __init__(self, hand_tracker: HandTracker, spell_engine: SpellEngine, object_identifier: Optional[ObjectIdentifier] = None):
+    def __init__(self, hand_tracker: HandTracker, spell_engine: SpellEngine):
         super().__init__()
         self.spell_engine = spell_engine
-        self.object_identifier = object_identifier
         self.running = False
         self.cap = None
         
         # Wand tracking
         self.wand_tracker = WandTracker(hand_tracker, smoothing_factor=0.5)
         
-        # Identification state
-        self.identification_thread: Optional[IdentificationThread] = None
-        self.identification_requested = False
 
         # Wizard hat overlay
         self.wizard_hat_overlay = WizardHatOverlay()
@@ -137,10 +111,6 @@ class CameraThread(QThread):
         # Emit signal
         self.spell_identified.emit(object_name)
         
-        # Clean up thread
-        if self.identification_thread:
-            self.identification_thread.wait()
-            self.identification_thread = None
 
     def stop(self):
         """Stop video capture."""
@@ -165,28 +135,13 @@ class CameraWidget(QLabel):
         self.spell_engine = SpellEngine(640, 480)
         self.camera_thread = None
         
-        # Initialize ObjectIdentifier (lazy initialization on first use)
-        self.object_identifier: Optional[ObjectIdentifier] = None
         
     def start_camera(self, camera_index: int = 0):
         """Start camera capture."""
         if self.camera_thread and self.camera_thread.isRunning():
             self.stop_camera()
         
-        # Initialize ObjectIdentifier if not already done
-        if self.object_identifier is None:
-            try:
-                import os
-                api_key = os.getenv('GOOGLE_API_KEY')
-                if api_key:
-                    self.object_identifier = ObjectIdentifier(api_key=api_key)
-                    print("[DEBUG] ObjectIdentifier initialized")
-                else:
-                    print("[WARNING] GOOGLE_API_KEY not set, pattern identification will not work")
-            except Exception as e:
-                print(f"[WARNING] Failed to initialize ObjectIdentifier: {e}")
-        
-        self.camera_thread = CameraThread(self.hand_tracker, self.spell_engine, self.object_identifier)
+        self.camera_thread = CameraThread(self.hand_tracker, self.spell_engine)
         self.camera_thread.frame_ready.connect(self.update_frame)
         # Removed spell_identified connection - no longer used
         
