@@ -36,7 +36,7 @@ class SpellEngine:
         # Initialize spell instances
         self.lumos = LumosSpell(frame_width, frame_height)
         self.wingardium_leviosa = WingardiumLeviosaSpell(frame_width, frame_height)
-        self.expecto_patronum = ExpectoPatronumSpell(frame_width, frame_height)
+        self.expecto_patronum = ExpectoPatronumSpell(frame_width, frame_height, "assets/images/spell_guide.webp")
         
         # Current active spell instance
         self._active_spell_instance = None

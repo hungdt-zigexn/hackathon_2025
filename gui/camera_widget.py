@@ -14,31 +14,12 @@ from core.spell_engine import SpellEngine, SpellType
 from core.object_identifier import ObjectIdentifier
 
 
-class IdentificationThread(QThread):
-    """Background thread for pattern identification."""
-    
-    identification_complete = pyqtSignal(str)  # Emits object name when done
-    
-    def __init__(self, object_identifier: ObjectIdentifier, pattern_image: np.ndarray):
-        super().__init__()
-        self.object_identifier = object_identifier
-        self.pattern_image = pattern_image.copy()  # Make a copy to avoid issues
-    
-    def run(self):
-        """Run identification in background."""
-        try:
-            object_name = self.object_identifier.identify_from_canvas(self.pattern_image)
-            self.identification_complete.emit(object_name)
-        except Exception as e:
-            print(f"Error in identification thread: {e}")
-            self.identification_complete.emit("wand")  # Default fallback
-
-
+# Removed IdentificationThread - no longer needed for automatic patronus loading
 class CameraThread(QThread):
     """Thread for capturing and processing video frames."""
     
     frame_ready = pyqtSignal(np.ndarray)
-    spell_identified = pyqtSignal(str)
+    # Removed spell_identified signal - no longer used
     
     def __init__(self, hand_tracker: HandTracker, spell_engine: SpellEngine, object_identifier: Optional[ObjectIdentifier] = None):
         super().__init__()
@@ -52,8 +33,7 @@ class CameraThread(QThread):
         self.prev_wand_base = None
         self.smoothing_factor = 0.5  # Higher = more responsive, Lower = smoother
         # Identification state
-        self.identification_thread: Optional[IdentificationThread] = None
-        self.identification_requested = False
+        # Removed identification variables - no longer needed
 
         # Face detection for wizard hat using new MediaPipe API
         try:
@@ -167,13 +147,7 @@ class CameraThread(QThread):
                 self.prev_wand_base = None
             self.spell_engine.update(dt, wand_tip_normalized)
 
-            # Reset identification_requested if spell changed or identification_pending is False
-            if not hasattr(self, '_last_spell'):
-                self._last_spell = None
-            if (self._last_spell != self.spell_engine.current_spell or
-                (self.spell_engine.current_spell == SpellType.EXPECTO_PATRONUM and not self.spell_engine.identification_pending)):
-                self.identification_requested = False
-            self._last_spell = self.spell_engine.current_spell
+            # Removed identification reset logic - no longer needed
             
             # Draw wand and get visual tip
             visual_tip = None
@@ -190,27 +164,7 @@ class CameraThread(QThread):
             
             frame = self.spell_engine.draw_effects(frame, final_effect_pos)
             
-            # Check if EXPECTO_PATRONUM spell needs identification
-            if (self.spell_engine.current_spell == SpellType.EXPECTO_PATRONUM and
-                self.spell_engine.identification_pending and
-                not self.identification_requested and
-                self.object_identifier is not None):
-
-                self.identification_requested = True
-                # Extract pattern image from patronum_path
-                if len(self.spell_engine.patronum_path) > 1:
-                    # Create a canvas image with the drawn path
-                    canvas = np.zeros((h, w, 3), dtype=np.uint8)
-                    canvas.fill(255)  # White background
-
-                    # Draw the path in black
-                    pts = np.array(self.spell_engine.patronum_path, np.int32)
-                    cv2.polylines(canvas, [pts], False, (0, 0, 0), 5, cv2.LINE_AA)
-
-                    # Start identification in background thread
-                    self.identification_thread = IdentificationThread(self.object_identifier, canvas)
-                    self.identification_thread.identification_complete.connect(self.on_identification_complete)
-                    self.identification_thread.start()
+            # EXPECTO_PATRONUM now uses automatic patronus loading - no identification needed
 
             # Emit processed frame
             self.frame_ready.emit(frame)
@@ -218,25 +172,7 @@ class CameraThread(QThread):
             # Small delay to prevent overwhelming the system
             self.msleep(33)  # ~30 FPS
     
-    def on_identification_complete(self, object_name: str):
-        """Handle identification completion."""
-        print(f"[DEBUG] Identification complete: {object_name}")
-        self.spell_engine.identification_pending = False
-        self.spell_engine.identified_object = object_name
-        
-        # Load the Patronum model
-        if self.spell_engine.load_patronum_model(object_name):
-            print(f"[DEBUG] Model loaded successfully: {object_name}")
-        else:
-            print(f"[DEBUG] Failed to load model: {object_name}")
-        
-        # Emit signal
-        self.spell_identified.emit(object_name)
-        
-        # Clean up thread
-        if self.identification_thread:
-            self.identification_thread.wait()
-            self.identification_thread = None
+# Removed on_identification_complete - EXPECTO_PATRONUM now loads automatically
 
     def _overlay_wizard_hat(self, frame: np.ndarray) -> np.ndarray:
         """Overlay wizard hat on detected faces."""
@@ -384,8 +320,8 @@ class CameraThread(QThread):
 
 class CameraWidget(QLabel):
     """Widget for displaying camera feed with AR overlays."""
-    
-    spell_identified = pyqtSignal(str)
+
+    # Removed spell_identified signal - no longer used
     
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -420,7 +356,7 @@ class CameraWidget(QLabel):
         
         self.camera_thread = CameraThread(self.hand_tracker, self.spell_engine, self.object_identifier)
         self.camera_thread.frame_ready.connect(self.update_frame)
-        self.camera_thread.spell_identified.connect(self.spell_identified.emit)
+        # Removed spell_identified connection - no longer used
         
         try:
             self.camera_thread.start_capture(camera_index)
@@ -431,9 +367,6 @@ class CameraWidget(QLabel):
     def stop_camera(self):
         """Stop camera capture."""
         if self.camera_thread:
-            # Wait for any identification thread to finish
-            if self.camera_thread.identification_thread:
-                self.camera_thread.identification_thread.wait()
             self.camera_thread.stop()
             self.camera_thread = None
     
