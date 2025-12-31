@@ -128,16 +128,21 @@ class VoiceVerifier:
             "The user will attempt to pronounce a spell. Your job is to verify if they pronounced it correctly. "
             "You must return a JSON object with two keys: 'is_correct' (boolean) and 'feedback' (string). "
             "Do not include markdown formatting like ```json ... ```, just the raw JSON string. "
-            "Listen carefully. If the pronunciation is correct, close, or even slightly ambiguous, set 'is_correct' to true. "
-            "Only set 'is_correct' to false if it is blatantly incorrect. "
-            "If you are tempted to say 'try again', instead accept it as correct and praise the effort. "
+            ""
+            "CRITICAL RULES: "
+            "1. You MUST listen to the actual audio recording provided. "
+            "2. If the user is SILENT (no speech detected), you MUST set 'is_correct' to false. "
+            "3. If the user says something completely different from the target spell, set 'is_correct' to false. "
+            "4. Only set 'is_correct' to true if the user actually pronounces the spell correctly or very close to correct. "
+            "5. Be strict but fair - the pronunciation must be recognizable as the target spell. "
+            ""
             "Keep your response brief and in character."
         )
         
         if is_retry:
             system_instruction += (
-                " IMPORTANT: The user is struggling and retrying. Unless they stay completely silent or say something entirely unrelated, "
-                "you MUST mark it as correct ('is_correct': true). Be encouraging and praise their persistence."
+                " IMPORTANT: This is a retry attempt. Still be strict - only mark as correct if they actually said the spell. "
+                "If they are silent or said something completely wrong, mark as incorrect."
             )
         
         # SPECIAL RULE: Wingardium Leviosa first try failure (Leviosa vs LeviosAR)
@@ -150,9 +155,12 @@ class VoiceVerifier:
 
         # Create prompt
         prompt = (
-            f"The user is trying to cast the spell '{target_spell}'. "
-            f"Listen to their pronunciation and tell me if they got it right. "
-            f"Remember to return JSON."
+            f"Listen carefully to the audio recording. The user is trying to cast the spell '{target_spell}'. "
+            f"Analyze the actual audio: "
+            f"- Did they actually speak? (If silent, return is_correct: false) "
+            f"- Did they pronounce '{target_spell}' correctly or close to it? "
+            f"- If they said something completely different or nothing at all, return is_correct: false. "
+            f"Return JSON with 'is_correct' (boolean) and 'feedback' (string)."
         )
         
         try:
@@ -179,22 +187,51 @@ class VoiceVerifier:
                                 ]
                             )
                         else:
-                            # Text-only fallback
+                            # If file upload not available, try base64 encoding
+                            print("[WARNING] File upload not available, trying base64 encoding")
                             response = model.generate_content(
-                                contents=f"{full_prompt}\n\nNote: Audio was recorded but file upload not available. Please provide general feedback about pronouncing '{target_spell}'."
+                                contents=[
+                                    {"text": full_prompt},
+                                    {"inline_data": {"mime_type": "audio/wav", "data": audio_base64}}
+                                ]
                             )
-                    except:
-                        # Try direct generate_content
-                        response = self.client.models.generate_content(
-                            model="gemini-2.5-flash",
-                            contents=full_prompt
-                        )
-                # Approach 2: Try genai module directly
+                    except Exception as e:
+                        print(f"[ERROR] Client API failed: {e}, trying fallback")
+                        # Try direct API call with base64
+                        import requests
+                        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={self.api_key}"
+                        payload = {
+                            "contents": [{
+                                "parts": [
+                                    {"text": full_prompt},
+                                    {
+                                        "inline_data": {
+                                            "mime_type": "audio/wav",
+                                            "data": audio_base64
+                                        }
+                                    }
+                                ]
+                            }]
+                        }
+                        try:
+                            response_data = requests.post(url, json=payload).json()
+                            if 'candidates' in response_data and len(response_data['candidates']) > 0:
+                                feedback = response_data['candidates'][0]['content']['parts'][0]['text']
+                            else:
+                                print(f"[ERROR] No candidates in response: {response_data}")
+                                feedback = '{"is_correct": false, "feedback": "I couldn\'t verify your pronunciation. Please try again."}'
+                        except Exception as req_error:
+                            print(f"[ERROR] Request API failed: {req_error}")
+                            feedback = '{"is_correct": false, "feedback": "I couldn\'t verify your pronunciation. Please try again."}'
+                # Approach 2: Try genai module directly with base64
                 elif hasattr(genai, 'GenerativeModel'):
                     model = genai.GenerativeModel('gemini-2.5-flash')
                     # For audio, we'd need to use file upload - for now use text
                     response = model.generate_content(
-                        f"{full_prompt}\n\nThe user attempted to say '{target_spell}'. Please provide feedback as Hermione."
+                        [
+                            {"text": full_prompt},
+                            {"mime_type": "audio/wav", "data": audio_base64}
+                        ]
                     )
                 else:
                     # Fallback: Use requests to call API directly
@@ -202,13 +239,26 @@ class VoiceVerifier:
                     url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={self.api_key}"
                     payload = {
                         "contents": [{
-                            "parts": [{"text": f"{full_prompt}\n\nThe user attempted to say '{target_spell}'. Please provide feedback as Hermione."}]
+                            "parts": [
+                                {"text": full_prompt},
+                                {
+                                    "inline_data": {
+                                        "mime_type": "audio/wav",
+                                        "data": audio_base64
+                                    }
+                                }
+                            ]
                         }]
                     }
-                    response_data = requests.post(url, json=payload).json()
-                    if 'candidates' in response_data and len(response_data['candidates']) > 0:
-                        feedback = response_data['candidates'][0]['content']['parts'][0]['text']
-                    else:
+                    try:
+                        response_data = requests.post(url, json=payload).json()
+                        if 'candidates' in response_data and len(response_data['candidates']) > 0:
+                            feedback = response_data['candidates'][0]['content']['parts'][0]['text']
+                        else:
+                            print(f"[ERROR] No candidates in response: {response_data}")
+                            feedback = '{"is_correct": false, "feedback": "I couldn\'t verify your pronunciation. Please try again."}'
+                    except Exception as req_error:
+                        print(f"[ERROR] Request API failed: {req_error}")
                         feedback = '{"is_correct": false, "feedback": "I couldn\'t verify your pronunciation. Please try again."}'
                 
                 # Extract result text from response if not already extracted
@@ -220,7 +270,11 @@ class VoiceVerifier:
                     elif isinstance(response, dict) and 'candidates' in response:
                         feedback = response['candidates'][0]['content']['parts'][0]['text']
                     else:
-                        feedback = str(response)
+                        # If we can't extract, default to failure
+                        feedback = '{"is_correct": false, "feedback": "I couldn\'t process the audio. Please try again."}'
+
+                # Debug: Log raw response
+                print(f"[DEBUG] Raw feedback from API: {feedback[:200]}...")  # Log first 200 chars
                 
                 # Parse JSON response
                 try:
@@ -234,25 +288,54 @@ class VoiceVerifier:
                         cleaned_text = cleaned_text[:-3]
                     cleaned_text = cleaned_text.strip()
                     
+                    # Try to find JSON object in the text if it's embedded
+                    if cleaned_text.startswith("{") and cleaned_text.endswith("}"):
+                        # Already looks like JSON
+                        pass
+                    elif "{" in cleaned_text and "}" in cleaned_text:
+                        # Extract JSON object from text
+                        start_idx = cleaned_text.find("{")
+                        end_idx = cleaned_text.rfind("}") + 1
+                        cleaned_text = cleaned_text[start_idx:end_idx]
+                    
                     data = json.loads(cleaned_text)
                     is_correct = data.get("is_correct", False)
                     feedback_msg = data.get("feedback", "I couldn't verify that properly.")
+                    print(f"[DEBUG] Parsed JSON successfully: is_correct={is_correct}, feedback={feedback_msg[:100]}")
                     return is_correct, feedback_msg
-                except json.JSONDecodeError:
-                    print(f"Failed to parse JSON from Gemini: {feedback}")
+                except json.JSONDecodeError as e:
+                    print(f"[ERROR] Failed to parse JSON from Gemini: {e}")
+                    print(f"[ERROR] Raw feedback: {feedback}")
+                    # Return the feedback string directly if it's already a formatted message
+                    if isinstance(feedback, str) and len(feedback) > 0:
+                        return False, feedback
+                    return False, "I couldn't process the audio. Please try again."
                     # Fallback to text analysis if JSON fails
                     feedback_lower = feedback.lower()
-                    
-                    # Check for explicit negatives first
-                    if "not correct" in feedback_lower or "incorrect" in feedback_lower or "wrong" in feedback_lower or "close but" in feedback_lower:
+
+                    # Only return True if there's explicit confirmation of correctness
+                    explicit_positive = (
+                        "correct" in feedback_lower and "not correct" not in feedback_lower and "incorrect" not in feedback_lower
+                    ) or "perfect" in feedback_lower or "excellent" in feedback_lower or "brilliant" in feedback_lower
+
+                    # Check for explicit negatives
+                    explicit_negative = (
+                        "not correct" in feedback_lower or
+                        "incorrect" in feedback_lower or
+                        "wrong" in feedback_lower or
+                        "silent" in feedback_lower or
+                        "didn't say" in feedback_lower or
+                        "no speech" in feedback_lower
+                    )
+
+                    if explicit_negative:
                         return False, feedback
-                    
-                    # Check for positives
-                    if "correct" in feedback_lower or "right" in feedback_lower or "well done" in feedback_lower or "perfect" in feedback_lower or "brilliant" in feedback_lower or "excellent" in feedback_lower:
+                    elif explicit_positive:
                         return True, feedback
-                    
-                    return False, feedback
-                
+                    else:
+                        # Default to FALSE if unclear
+                        return False, f"I couldn't clearly verify that. Please try again. {feedback}"
+
             except Exception as api_error:
                 # Final fallback - provide basic feedback
                 error_msg = f"API Error: {str(api_error)}"
