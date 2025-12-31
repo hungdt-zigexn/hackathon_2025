@@ -7,11 +7,12 @@ from typing import Optional, Tuple, List
 from enum import Enum
 import math
 
-from .spells import LumosSpell, WingardiumLeviosaSpell, ExpectoPatronumSpell
+from .spells import LumosSpell, WingardiumLeviosaSpell, ExpectoPatronumSpell, VeraVertoSpell
 
 
 class SpellType(Enum):
     """Types of spells available."""
+    VERA_VERTO = "Vera Verto"
     LUMOS = "Lumos"
     WINGARDIUM_LEVIOSA = "Wingardium Leviosa"
     EXPECTO_PATRONUM = "Expecto Patronum"
@@ -34,6 +35,7 @@ class SpellEngine:
         self.spell_active = False
         
         # Initialize spell instances
+        self.vera_verto = VeraVertoSpell(frame_width, frame_height)
         self.lumos = LumosSpell(frame_width, frame_height)
         self.wingardium_leviosa = WingardiumLeviosaSpell(frame_width, frame_height)
         self.expecto_patronum = ExpectoPatronumSpell(frame_width, frame_height, "assets/images/spell_guide.webp")
@@ -43,7 +45,9 @@ class SpellEngine:
     
     def _get_spell_instance(self, spell_type: SpellType):
         """Get spell instance for given type."""
-        if spell_type == SpellType.LUMOS:
+        if spell_type == SpellType.VERA_VERTO:
+            return self.vera_verto
+        elif spell_type == SpellType.LUMOS:
             return self.lumos
         elif spell_type == SpellType.WINGARDIUM_LEVIOSA:
             return self.wingardium_leviosa
@@ -64,8 +68,8 @@ class SpellEngine:
         
         if spell_instance:
             spell_instance.setup_scene()
-            # For Wingardium Leviosa, we need spell_active=True to show the grounded object
-            if spell_type == SpellType.WINGARDIUM_LEVIOSA:
+            # For Wingardium Leviosa and Vera Verto, we need spell_active=True to show objects
+            if spell_type in [SpellType.WINGARDIUM_LEVIOSA, SpellType.VERA_VERTO]:
                 self.spell_active = True
             else:
                 self.spell_active = False
@@ -120,6 +124,7 @@ class SpellEngine:
         self.frame_height = height
         
         # Update all spell instances
+        self.vera_verto.update_frame_size(width, height)
         self.lumos.update_frame_size(width, height)
         self.wingardium_leviosa.update_frame_size(width, height)
         self.expecto_patronum.update_frame_size(width, height)
