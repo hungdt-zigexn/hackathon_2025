@@ -22,6 +22,9 @@ class WandTracker:
         # Smoothing state
         self.prev_wand_tip = None
         self.prev_wand_base = None
+        
+        # Current landmarks for bbox calculation
+        self.current_landmarks = None
     
     def process_frame(self, frame, frame_width: int, frame_height: int) -> Optional[Tuple[float, float]]:
         """
@@ -39,10 +42,13 @@ class WandTracker:
         landmarks = self.hand_tracker.process_frame(frame)
         
         if not landmarks:
-            # Reset smoothing if hand lost
             self.prev_wand_tip = None
             self.prev_wand_base = None
+            self.current_landmarks = None
             return None
+        
+        # Store landmarks for bbox calculation
+        self.current_landmarks = landmarks
         
         # MediaPipe returns normalized coordinates (0-1)
         raw_tip_norm = self.hand_tracker.get_wand_position(landmarks)
@@ -112,7 +118,40 @@ class WandTracker:
         
         return (int(self.prev_wand_base[0]), int(self.prev_wand_base[1]))
     
+    def get_hand_bbox(self, frame_width: int, frame_height: int) -> Optional[Tuple[int, int, int, int]]:
+        """
+        Calculate hand bounding box from landmarks.
+        
+        Args:
+            frame_width: Frame width in pixels
+            frame_height: Frame height in pixels
+        
+        Returns:
+            Hand bbox as (x, y, width, height) in pixels, or None if no hand detected
+        """
+        if self.current_landmarks is None:
+            return None
+        
+        # Get min/max x, y from all landmarks
+        xs = [lm.x * frame_width for lm in self.current_landmarks]
+        ys = [lm.y * frame_height for lm in self.current_landmarks]
+        
+        x_min, y_min = int(min(xs)), int(min(ys))
+        x_max, y_max = int(max(xs)), int(max(ys))
+        
+        # Add padding (10% of bbox size)
+        width, height = x_max - x_min, y_max - y_min
+        padding_x, padding_y = int(width * 0.1), int(height * 0.1)
+        
+        x = max(0, x_min - padding_x)
+        y = max(0, y_min - padding_y)
+        w = min(frame_width - x, width + 2 * padding_x)
+        h = min(frame_height - y, height + 2 * padding_y)
+        
+        return (x, y, w, h)
+    
     def reset(self):
         """Reset smoothing state."""
         self.prev_wand_tip = None
         self.prev_wand_base = None
+        self.current_landmarks = None

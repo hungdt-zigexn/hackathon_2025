@@ -94,6 +94,10 @@ class CameraThread(QThread):
             # Process hand tracking and get wand position
             wand_tip_normalized = self.wand_tracker.process_frame(frame, w, h)
             
+            # Get hand bbox for face/hand discrimination
+            hand_bbox = self.wand_tracker.get_hand_bbox(w, h)
+            hand_bboxes = [hand_bbox] if hand_bbox else []
+            
             # Update spell engine with wand position
             self.spell_engine.update(dt, wand_tip_normalized)
 
@@ -106,7 +110,8 @@ class CameraThread(QThread):
             self._last_spell = self.spell_engine.current_spell
 
             # Add wizard hat overlay on face (throttled for performance)
-            frame = self.wizard_hat_overlay.process_frame(frame)
+            # Pass hand_bboxes to filter out false face detections
+            frame = self.wizard_hat_overlay.process_frame(frame, hand_bboxes=hand_bboxes)
 
             # Draw spell effects
             # Use wand tip position directly
