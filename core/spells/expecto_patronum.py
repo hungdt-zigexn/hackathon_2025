@@ -21,6 +21,7 @@ class ExpectoPatronumSpell(BaseSpell):
     GUIDE_TOLERANCE_PX = 35      # how far finger can be from guide
     SMOKE_ALPHA = 0.4
     MAX_PATH_POINTS = 300
+    START_TOLERANCE_PX = 40   # how close finger must be to start point
 
     def __init__(self, frame_width: int, frame_height: int, guide_path_png: str):
         super().__init__(frame_width, frame_height)
@@ -30,6 +31,7 @@ class ExpectoPatronumSpell(BaseSpell):
         self.last_pos = None
         self.speed = 0.0
         self.patronus_locked = False
+        self.started = False
 
         self.identification_pending = False
         self.identified_object = None
@@ -90,6 +92,7 @@ class ExpectoPatronumSpell(BaseSpell):
         self.model_position = None
         self._patronus_displayed = False
         self.patronus_locked = False
+        self.started = False
         self.max_guide_idx = 0
 
 
@@ -158,24 +161,38 @@ class ExpectoPatronumSpell(BaseSpell):
         guide[:, 0] = guide[:, 0] * t["scale"] + t["x"]
         guide[:, 1] = guide[:, 1] * t["scale"] + t["y"]
 
-        # Distance to all guide points
-        dists = np.linalg.norm(guide - np.array(point), axis=1)
+        point = np.array(point, dtype=np.float32)
+
+        # --------------------------------------------------
+        # 1. START LOCK (must begin near first guide point)
+        # --------------------------------------------------
+        start_dist = np.linalg.norm(guide[0] - point)
+
+        if not self.started:
+            if start_dist <= self.START_TOLERANCE_PX:
+                self.started = True
+                self.max_guide_idx = 0
+            else:
+                self.last_guide_distance = start_dist
+                return 0.0
+
+        # --------------------------------------------------
+        # 2. NORMAL PROGRESS TRACKING
+        # --------------------------------------------------
+        dists = np.linalg.norm(guide - point, axis=1)
         idx = int(np.argmin(dists))
         self.last_guide_distance = dists[idx]
 
-        # Too far from guide → freeze progress
         if self.last_guide_distance > self.GUIDE_TOLERANCE_PX:
             return self.progress
 
-        # ---- MONOTONIC PROGRESS ----
-        # Allow slight backward jitter (5%)
+        # Allow small backward jitter (5%)
         backward_limit = int(len(guide) * 0.05)
 
         if idx >= self.max_guide_idx - backward_limit:
             self.max_guide_idx = max(self.max_guide_idx, idx)
 
-        progress = self.max_guide_idx / max(len(guide) - 1, 1)
-        return progress
+        return self.max_guide_idx / max(len(guide) - 1, 1)
 
     def _check_progress_and_stop(self):
         if self.patronus_locked:
