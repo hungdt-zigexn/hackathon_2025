@@ -219,9 +219,6 @@ class CameraThread(QThread):
 
             # Emit processed frame
             self.frame_ready.emit(frame)
-
-            # Small delay to prevent overwhelming the system
-            self.msleep(33)  # ~30 FPS
     
     def on_identification_complete(self, object_name: str):
         """Handle identification completion."""
@@ -341,7 +338,6 @@ class CameraThread(QThread):
         hat_width = int(box_w * hat_scale)
         hat_height = int(hat_width * self.wizard_hat.shape[0] / self.wizard_hat.shape[1])
         
-        # Check cache
         current_size = (hat_width, hat_height)
         if (self._cached_resized_hat is not None and 
             self._cached_hat_size == current_size):
