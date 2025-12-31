@@ -21,6 +21,7 @@ class CameraThread(QThread):
     
     def __init__(self, hand_tracker: HandTracker, spell_engine: SpellEngine):
         super().__init__()
+        self.hand_tracker = hand_tracker
         self.spell_engine = spell_engine
         self.running = False
         self.cap = None
@@ -28,7 +29,6 @@ class CameraThread(QThread):
         # Wand tracking
         self.wand_tracker = WandTracker(hand_tracker, smoothing_factor=0.5)
         
-
         # Wizard hat overlay
         self.wizard_hat_overlay = WizardHatOverlay()
 
@@ -68,49 +68,23 @@ class CameraThread(QThread):
             # Process hand tracking and get wand position
             wand_tip_normalized = self.wand_tracker.process_frame(frame, w, h)
             
-            # Get hand bbox for face/hand discrimination
+            # Get hand bounding box for face detection filtering
             hand_bbox = self.wand_tracker.get_hand_bbox(w, h)
             hand_bboxes = [hand_bbox] if hand_bbox else []
             
             # Update spell engine with wand position
             self.spell_engine.update(dt, wand_tip_normalized)
-
-            # Reset identification_requested if spell changed or identification_pending is False
-            if not hasattr(self, '_last_spell'):
-                self._last_spell = None
-            if (self._last_spell != self.spell_engine.current_spell or
-                (self.spell_engine.current_spell == SpellType.EXPECTO_PATRONUM and not self.spell_engine.identification_pending)):
-                self.identification_requested = False
-            self._last_spell = self.spell_engine.current_spell
-
+            
             # Add wizard hat overlay on face (throttled for performance)
-            # Pass hand_bboxes to filter out false face detections
-            frame = self.wizard_hat_overlay.process_frame(frame, hand_bboxes=hand_bboxes)
+            frame = self.wizard_hat_overlay.process_frame(frame, hand_bboxes)
 
             # Draw spell effects
-            # Use wand tip position directly
             frame = self.spell_engine.draw_effects(frame, wand_tip_normalized)
             
             # EXPECTO_PATRONUM now uses automatic patronus loading - no identification needed
 
             # Emit processed frame
             self.frame_ready.emit(frame)
-    
-    def on_identification_complete(self, object_name: str):
-        """Handle identification completion."""
-        print(f"[DEBUG] Identification complete: {object_name}")
-        self.spell_engine.identification_pending = False
-        self.spell_engine.identified_object = object_name
-        
-        # Load the Patronum model
-        if self.spell_engine.load_patronum_model(object_name):
-            print(f"[DEBUG] Model loaded successfully: {object_name}")
-        else:
-            print(f"[DEBUG] Failed to load model: {object_name}")
-        
-        # Emit signal
-        self.spell_identified.emit(object_name)
-        
 
     def stop(self):
         """Stop video capture."""
