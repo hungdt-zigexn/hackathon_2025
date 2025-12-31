@@ -180,6 +180,10 @@ class CameraThread(QThread):
             if wand_tip:
                 visual_tip = wand_tip
 
+            # Add wizard hat overlay on face
+            if self.wizard_hat is not None and self.face_detection is not None:
+                frame = self._overlay_wizard_hat(frame)
+            
             # Draw spell effects
             # Use finger tip position directly (wand drawing removed)
             final_effect_pos = wand_tip_normalized if landmarks else None
@@ -207,10 +211,6 @@ class CameraThread(QThread):
                     self.identification_thread = IdentificationThread(self.object_identifier, canvas)
                     self.identification_thread.identification_complete.connect(self.on_identification_complete)
                     self.identification_thread.start()
-            
-            # Add wizard hat overlay on face
-            if self.wizard_hat is not None and self.face_detection is not None:
-                frame = self._overlay_wizard_hat(frame)
 
             # Emit processed frame
             self.frame_ready.emit(frame)
