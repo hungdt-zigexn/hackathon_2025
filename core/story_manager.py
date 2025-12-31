@@ -57,10 +57,13 @@ class StoryManager:
             # Wingardium Leviosa briefing + practice
             3: StoryStep(
                 id=3,
-                title="Bài học Bay lơ lửng",
+                title="Thử thách của người xứng đáng",
                 description=(
-                    "Ngay bên ngoài, một đống đá chặn đường của bạn. Bay lơ lửng là về sự cân bằng—chuyển động có kiểm soát, "
-                    "một cú vung nhẹ nhàng, và giọng nói tự tin dẫn dắt ma thuật."
+                    "Giữa sân huấn luyện, một chiếc búa cổ đại nằm bất động trên bệ đá. "
+                    "Người hướng dẫn nhìn bạn và nói: không phải sức mạnh, mà là sự tập trung và ý chí "
+                    "mới quyết định liệu bạn có thể nâng nó lên hay không."
+                    "Wingardium Leviosa không chỉ là phép bay lơ lửng—"
+                    "đó là bài kiểm tra xem bạn có thực sự xứng đáng để điều khiển ma thuật hay không."
                 ),
                 step_type=StoryStepType.EXPLANATION,
                 required_spell=SpellType.WINGARDIUM_LEVIOSA,
@@ -68,11 +71,17 @@ class StoryManager:
             ),
             4: StoryStep(
                 id=4,
-                title="Thực hành Wingardium Leviosa",
-                description="Nâng những viên đá lên cao bằng 'Wingardium Leviosa' và dọn sạch sân.",
+                title="Nâng búa thử thách",
+                description=(
+                    "Tập trung tinh thần, giữ tay vững vàng và thi triển 'Wingardium Leviosa'. "
+                    "Nếu tâm trí bạn đủ thuần khiết và ý chí đủ mạnh, chiếc búa sẽ nhấc lên khỏi mặt đất."
+                ),
                 step_type=StoryStepType.PRACTICE,
                 required_spell=SpellType.WINGARDIUM_LEVIOSA,
-                success_message="Những viên đá bay sang một bên một cách uyển chuyển. Sân đã được dọn sạch—hoàn thành bài tập!",
+                success_message=(
+                    "Chiếc búa rung nhẹ… rồi từ từ bay lên trong không trung. "
+                    "Bạn đã chứng minh mình là người xứng đáng!"
+                ),
                 next_step_id=5,
             ),
             # Vera Verto briefing + practice
@@ -106,11 +115,10 @@ class StoryManager:
                 id=7,
                 title="Triệu hồi Patronus",
                 description=(
-                    "Trong Đại sảnh, bạn học phép phòng thủ mạnh nhất. "
-                    "Expecto Patronum triệu hồi một vệ thần từ ký ức hạnh phúc nhất của bạn. "
-                    "Vẽ một hình trong không khí bằng đũa phép, và Patronus của bạn sẽ hiện hình—"
-                    "một quả bóng, một con mèo, một trái tim, một chiếc pizza, một ngôi sao, hoặc một cây đũa phép. "
-                    "Hãy nghĩ về ký ức hạnh phúc nhất và để đũa phép dẫn dắt ma thuật."
+                    "Không giống những phép thuật khác, Expecto Patronum không dựa vào lời nói đơn thuần. "
+                    "Bạn phải vẽ một ký hiệu đặc biệt trong không khí, theo đúng hướng dẫn."
+                    "Mỗi nét vẽ là một dòng chảy ma thuật. Khi hoàn chỉnh, ký hiệu sẽ mở cánh cổng "
+                    "triệu hồi Thần hộ mệnh—hiện thân của ký ức hạnh phúc và sức mạnh nội tâm của bạn."
                 ),
                 step_type=StoryStepType.EXPLANATION,
                 required_spell=SpellType.EXPECTO_PATRONUM,
@@ -120,12 +128,14 @@ class StoryManager:
                 id=8,
                 title="Thực hành Expecto Patronum",
                 description=(
-                    "Thi triển 'Expecto Patronum' và vẽ Patronus của bạn trong không khí bằng đũa phép. "
-                    "Bạn có 5 giây để hoàn thành bản vẽ. Tập trung vào ký ức hạnh phúc nhất của bạn!"
+                    "Thi triển 'Expecto Patronum' và vẽ ký hiệu theo đúng hướng dẫn bằng đũa phép."
+                    "Nếu các nét vẽ chính xác và liền mạch, Thần hộ mệnh sẽ được triệu hồi."
                 ),
                 step_type=StoryStepType.PRACTICE,
                 required_spell=SpellType.EXPECTO_PATRONUM,
-                success_message="Tuyệt vời! Patronus của bạn đã hiện hình và toả sáng với ánh bạc!",
+                success_message=(
+                    "🌟 Thần hộ mệnh đã được triệu hồi! Ánh bạc bao quanh bạn 🌟"
+                ),
                 next_step_id=None,
             ),
         }
@@ -138,6 +148,21 @@ class StoryManager:
         current = self.get_current_step()
         if current and current.next_step_id:
             self.current_step_id = current.next_step_id
+            return True
+        return False
+
+    def skip_step(self) -> bool:
+        """Skip the current step and advance to the next step. Returns True if there is a next step."""
+        current = self.get_current_step()
+        if current and current.next_step_id:
+            self.current_step_id = current.next_step_id
+            return True
+        return False
+
+    def go_back(self) -> bool:
+        """Go back to the previous step. Returns True if there is a previous step."""
+        if self.current_step_id > 1:
+            self.current_step_id -= 1
             return True
         return False
 
