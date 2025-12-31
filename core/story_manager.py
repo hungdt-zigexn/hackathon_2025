@@ -75,9 +75,35 @@ class StoryManager:
                 success_message="Những viên đá bay sang một bên một cách uyển chuyển. Sân đã được dọn sạch—hoàn thành bài tập!",
                 next_step_id=5,
             ),
-            # Expecto Patronum briefing + practice
+            # Vera Verto briefing + practice
             5: StoryStep(
                 id=5,
+                title="Giới thiệu Vera Verto",
+                description=(
+                    "Chào mừng đến với lớp Biến hình! Bài học này là Vera Verto - phép biến đổi vật thể. "
+                    "Để thực hiện phép này, bạn cần chạm đũa phép vào vật thể, sau đó chỉ đũa về phía nó "
+                    "và đọc to 'Vera Verto'. Một làn sương mờ sẽ bao phủ vật thể và biến đổi nó. "
+                    "Hãy nhớ: tư thế và chuyển động đũa phép rất quan trọng!"
+                ),
+                step_type=StoryStepType.EXPLANATION,
+                required_spell=SpellType.VERA_VERTO,
+                next_step_id=6,
+            ),
+            6: StoryStep(
+                id=6,
+                title="Thực hành Vera Verto",
+                description=(
+                    "Đã đến lúc thực hành! Trước mặt bạn có một vật thể cần được biến đổi. "
+                    "Chạm đũa phép vào vật thể, chỉ đũa về phía nó và nói 'Vera Verto' để bắt đầu phép biến đổi."
+                ),
+                step_type=StoryStepType.PRACTICE,
+                required_spell=SpellType.VERA_VERTO,
+                success_message="Tuyệt vời! Vật thể đã được biến đổi thành công với làn sương mờ và ánh sáng ma thuật!",
+                next_step_id=7,
+            ),
+            # Expecto Patronum briefing + practice
+            7: StoryStep(
+                id=7,
                 title="Triệu hồi Patronus",
                 description=(
                     "Trong Đại sảnh, bạn học phép phòng thủ mạnh nhất. "
@@ -88,10 +114,10 @@ class StoryManager:
                 ),
                 step_type=StoryStepType.EXPLANATION,
                 required_spell=SpellType.EXPECTO_PATRONUM,
-                next_step_id=6,
+                next_step_id=8,
             ),
-            6: StoryStep(
-                id=6,
+            8: StoryStep(
+                id=8,
                 title="Thực hành Expecto Patronum",
                 description=(
                     "Thi triển 'Expecto Patronum' và vẽ Patronus của bạn trong không khí bằng đũa phép. "
