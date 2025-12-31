@@ -180,6 +180,10 @@ class CameraThread(QThread):
             if wand_tip:
                 visual_tip = wand_tip
 
+            # Add wizard hat overlay on face
+            if self.wizard_hat is not None and self.face_detection is not None:
+                frame = self._overlay_wizard_hat(frame)
+            
             # Draw spell effects
             # Use finger tip position directly (wand drawing removed)
             final_effect_pos = wand_tip_normalized if landmarks else None
@@ -207,10 +211,6 @@ class CameraThread(QThread):
                     self.identification_thread = IdentificationThread(self.object_identifier, canvas)
                     self.identification_thread.identification_complete.connect(self.on_identification_complete)
                     self.identification_thread.start()
-            
-            # Add wizard hat overlay on face
-            if self.wizard_hat is not None and self.face_detection is not None:
-                frame = self._overlay_wizard_hat(frame)
 
             # Emit processed frame
             self.frame_ready.emit(frame)
@@ -253,32 +253,88 @@ class CameraThread(QThread):
 
             if detection_result.detections:
                 h, w, _ = frame.shape
-
-                for detection in detection_result.detections:
-                    # Get bounding box
-                    bbox = detection.bounding_box
-                    x = bbox.origin_x
-                    y = bbox.origin_y
-                    box_w = bbox.width
-                    box_h = bbox.height
-
-                    # Calculate hat position (above the head)
-                    hat_width = int(box_w * 1.2)  # Hat slightly wider than face
-                    hat_height = int(hat_width * self.wizard_hat.shape[0] / self.wizard_hat.shape[1])
-
-                    # Position hat on top of head (higher up)
-                    hat_x = x - (hat_width - box_w) // 2
-                    hat_y = y - int(hat_height * 1.2)  # Place completely above head
-
-                    # Resize hat
-                    resized_hat = cv2.resize(self.wizard_hat, (hat_width, hat_height), interpolation=cv2.INTER_AREA)
-
-                    # Overlay hat with alpha blending
-                    frame = self._overlay_image_alpha(frame, resized_hat, hat_x, hat_y)
+                valid_face = self._find_best_face(detection_result.detections, w, h)
+                
+                if valid_face:
+                    frame = self._place_hat_on_face(frame, valid_face)
         except Exception as e:
             print(f"Error in overlay_wizard_hat: {e}")
 
         return frame
+    
+    def _find_best_face(self, detections, frame_width: int, frame_height: int):
+        """Filter detections to find the best face (not hand)."""
+        valid_face = None
+        best_confidence = 0
+        
+        for detection in detections:
+            bbox = detection.bounding_box
+            x, y = bbox.origin_x, bbox.origin_y
+            box_w, box_h = bbox.width, bbox.height
+            
+            # Get confidence
+            confidence = 0.5
+            if hasattr(detection, 'score') and detection.score:
+                confidence = detection.score[0] if isinstance(detection.score, (list, tuple)) else detection.score
+            
+            # Apply filters
+            min_size, max_size = min(frame_width, frame_height) * 0.08, min(frame_width, frame_height) * 0.5
+            aspect_ratio = box_w / box_h if box_h > 0 else 0
+            center_x, center_y = x + box_w / 2, y + box_h / 2
+            
+            if not (min_size <= box_w <= max_size and min_size <= box_h <= max_size):
+                continue  # Size filter
+            if not (0.6 <= aspect_ratio <= 1.4):
+                continue  # Aspect ratio filter
+            if center_y > frame_height * 0.8:
+                continue  # Position filter (upper 80%)
+            if confidence < 0.5:
+                continue  # Confidence filter
+            if center_x < frame_width * 0.05 or center_x > frame_width * 0.95:
+                continue  # Edge position filter
+            
+            # Keep best confidence
+            if confidence > best_confidence:
+                best_confidence = confidence
+                valid_face = detection
+        
+        return valid_face
+    
+    def _place_hat_on_face(self, frame: np.ndarray, face_detection) -> np.ndarray:
+        """Place wizard hat on detected face."""
+        bbox = face_detection.bounding_box
+        x, y = bbox.origin_x, bbox.origin_y
+        box_w, box_h = bbox.width, bbox.height
+        h, w, _ = frame.shape
+        
+        # Adaptive hat size: face large (near camera) → hat smaller
+        # Calculate face ratio so với frame
+        face_ratio = max(box_w / w, box_h / h)
+        if face_ratio > 0.3:
+            hat_scale = 1.2 - (face_ratio - 0.3) * 1.5
+            hat_scale = max(0.75, hat_scale)
+        else:
+            hat_scale = 1.2
+        
+        # Calculate hat size
+        hat_width = int(box_w * hat_scale)
+        hat_height = int(hat_width * self.wizard_hat.shape[0] / self.wizard_hat.shape[1])
+        
+        # Calculate hat position (on top of head)
+        hat_x = x - (hat_width - box_w) // 2
+        head_top = y - int(box_h * 0.2)  # Estimate head top (face box starts at forehead)
+        hat_y = head_top - int(hat_height * 0.9)  # Place hat on head with slight overlap
+        
+        if hat_y + hat_height < 0:
+            hat_y = -int(hat_height * 0.3)
+        elif hat_y < 0:
+            pass
+        else:
+            hat_y = max(0, hat_y)
+        
+        # Resize and overlay
+        resized_hat = cv2.resize(self.wizard_hat, (hat_width, hat_height), interpolation=cv2.INTER_AREA)
+        return self._overlay_image_alpha(frame, resized_hat, hat_x, hat_y)
 
     def _overlay_image_alpha(self, background: np.ndarray, overlay: np.ndarray, x: int, y: int) -> np.ndarray:
         """Overlay image with alpha channel."""
