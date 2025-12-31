@@ -19,6 +19,10 @@ class WingardiumLeviosaSpell(BaseSpell):
         self.hover_offset = 0.0
         self.follow_finger = False
         self.reached_target = False
+        # Cache for performance
+        self._cached_hammer_size = None
+        self._cached_resized_hammer = None
+        self._cached_frame_size = (frame_width, frame_height)
         self._load_hammer()
     
     def _load_hammer(self):
@@ -37,13 +41,26 @@ class WingardiumLeviosaSpell(BaseSpell):
         if self.hammer_image is None:
             return 0, 0
         
+        # Check if cache is still valid
+        current_frame_size = (self.frame_width, self.frame_height)
+        if (self._cached_hammer_size is not None and 
+            self._cached_frame_size == current_frame_size):
+            return self._cached_hammer_size
+        
+        # Calculate and cache
         base_size = min(self.frame_width, self.frame_height) * 0.45
         hammer_h, hammer_w = self.hammer_image.shape[:2]
         aspect_ratio = hammer_w / hammer_h if hammer_h > 0 else 1.0
         
         if hammer_w > hammer_h:
-            return int(base_size), int(base_size / aspect_ratio)
-        return int(base_size * aspect_ratio), int(base_size)
+            size = (int(base_size), int(base_size / aspect_ratio))
+        else:
+            size = (int(base_size * aspect_ratio), int(base_size))
+        
+        self._cached_hammer_size = size
+        self._cached_frame_size = current_frame_size
+        self._cached_resized_hammer = None  # Invalidate resized cache
+        return size
     
     def _calculate_grounded_position(self) -> Tuple[int, int]:
         """Calculate position for grounded hammer."""
@@ -62,6 +79,8 @@ class WingardiumLeviosaSpell(BaseSpell):
         self.hover_offset = 0.0
         self.reached_target = False
         self.active = True
+        # Pre-cache resized hammer for better performance
+        self._get_resized_hammer()
     
     def activate(self, finger_pos: Optional[Tuple[float, float]] = None):
         """Activate Wingardium Leviosa spell."""
@@ -122,6 +141,25 @@ class WingardiumLeviosaSpell(BaseSpell):
         elif self.state == 'grounded':
             self.object_pos = self._calculate_grounded_position()
     
+    def _get_resized_hammer(self) -> Optional[np.ndarray]:
+        """Get resized hammer image (cached for performance)."""
+        if self.hammer_image is None:
+            return None
+        
+        # Check if cache is valid
+        if self._cached_resized_hammer is not None:
+            return self._cached_resized_hammer
+        
+        # Resize and cache
+        hammer_width, hammer_height = self._calculate_hammer_size()
+        if hammer_width > 0 and hammer_height > 0:
+            self._cached_resized_hammer = cv2.resize(
+                self.hammer_image, 
+                (hammer_width, hammer_height), 
+                interpolation=cv2.INTER_AREA
+            )
+        return self._cached_resized_hammer
+    
     def draw(self, frame: np.ndarray, finger_pos: Optional[Tuple[float, float]] = None) -> np.ndarray:
         """Draw Wingardium Leviosa object (Thor hammer)."""
         if not self.active or not self.object_pos or self.hammer_image is None:
@@ -131,8 +169,11 @@ class WingardiumLeviosaSpell(BaseSpell):
         if self.state == 'floating':
             y += int(self.hover_offset)
         
-        hammer_width, hammer_height = self._calculate_hammer_size()
-        resized_hammer = cv2.resize(self.hammer_image, (hammer_width, hammer_height), interpolation=cv2.INTER_AREA)
+        resized_hammer = self._get_resized_hammer()
+        if resized_hammer is None:
+            return frame
+        
+        hammer_width, hammer_height = resized_hammer.shape[1], resized_hammer.shape[0]
         return self._overlay_image_alpha(frame, resized_hammer, x - hammer_width // 2, y - hammer_height // 2)
     
     def _overlay_image_alpha(self, background: np.ndarray, overlay: np.ndarray, x: int, y: int) -> np.ndarray:

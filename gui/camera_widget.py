@@ -87,6 +87,11 @@ class CameraThread(QThread):
         else:
             print(f"Loaded wizard hat: {self.wizard_hat.shape}")
         
+        # Cache for hat rendering performance
+        self._cached_hat_size = None
+        self._cached_resized_hat = None
+        self._cached_face_box = None
+        
     def start_capture(self, camera_index: int = 0):
         """Start video capture."""
         self.cap = cv2.VideoCapture(camera_index)
@@ -256,7 +261,30 @@ class CameraThread(QThread):
                 valid_face = self._find_best_face(detection_result.detections, w, h)
                 
                 if valid_face:
+                    # Check if face box changed significantly (invalidate cache if needed)
+                    bbox = valid_face.bounding_box
+                    current_box = (bbox.origin_x, bbox.origin_y, bbox.width, bbox.height)
+                    
+                    # Invalidate cache if face size changed significantly (>10%)
+                    if self._cached_face_box:
+                        prev_w, prev_h = self._cached_face_box[2], self._cached_face_box[3]
+                        if abs(prev_w - bbox.width) / max(prev_w, 1) > 0.1 or \
+                           abs(prev_h - bbox.height) / max(prev_h, 1) > 0.1:
+                            self._cached_resized_hat = None
+                            self._cached_hat_size = None
+                    
+                    self._cached_face_box = current_box
                     frame = self._place_hat_on_face(frame, valid_face)
+                else:
+                    # No valid face, clear cache
+                    self._cached_resized_hat = None
+                    self._cached_hat_size = None
+                    self._cached_face_box = None
+            else:
+                # No detections, clear cache
+                self._cached_resized_hat = None
+                self._cached_hat_size = None
+                self._cached_face_box = None
         except Exception as e:
             print(f"Error in overlay_wizard_hat: {e}")
 
@@ -300,6 +328,32 @@ class CameraThread(QThread):
         
         return valid_face
     
+    def _get_resized_hat(self, box_w: int, box_h: int, frame_w: int, frame_h: int) -> Tuple[np.ndarray, int, int, int, int]:
+        """Get resized hat image and position (cached for performance)."""
+        # Calculate hat size
+        face_ratio = max(box_w / frame_w, box_h / frame_h)
+        if face_ratio > 0.3:
+            hat_scale = 1.2 - (face_ratio - 0.3) * 1.5
+            hat_scale = max(0.75, hat_scale)
+        else:
+            hat_scale = 1.2
+        
+        hat_width = int(box_w * hat_scale)
+        hat_height = int(hat_width * self.wizard_hat.shape[0] / self.wizard_hat.shape[1])
+        
+        # Check cache
+        current_size = (hat_width, hat_height)
+        if (self._cached_resized_hat is not None and 
+            self._cached_hat_size == current_size):
+            return self._cached_resized_hat, hat_width, hat_height, hat_scale, face_ratio
+        
+        # Resize and cache
+        resized_hat = cv2.resize(self.wizard_hat, (hat_width, hat_height), interpolation=cv2.INTER_AREA)
+        self._cached_resized_hat = resized_hat
+        self._cached_hat_size = current_size
+        
+        return resized_hat, hat_width, hat_height, hat_scale, face_ratio
+    
     def _place_hat_on_face(self, frame: np.ndarray, face_detection) -> np.ndarray:
         """Place wizard hat on detected face."""
         bbox = face_detection.bounding_box
@@ -307,18 +361,8 @@ class CameraThread(QThread):
         box_w, box_h = bbox.width, bbox.height
         h, w, _ = frame.shape
         
-        # Adaptive hat size: face large (near camera) → hat smaller
-        # Calculate face ratio so với frame
-        face_ratio = max(box_w / w, box_h / h)
-        if face_ratio > 0.3:
-            hat_scale = 1.2 - (face_ratio - 0.3) * 1.5
-            hat_scale = max(0.75, hat_scale)
-        else:
-            hat_scale = 1.2
-        
-        # Calculate hat size
-        hat_width = int(box_w * hat_scale)
-        hat_height = int(hat_width * self.wizard_hat.shape[0] / self.wizard_hat.shape[1])
+        # Get resized hat (cached)
+        resized_hat, hat_width, hat_height, _, _ = self._get_resized_hat(box_w, box_h, w, h)
         
         # Calculate hat position (on top of head)
         hat_x = x - (hat_width - box_w) // 2
@@ -332,8 +376,7 @@ class CameraThread(QThread):
         else:
             hat_y = max(0, hat_y)
         
-        # Resize and overlay
-        resized_hat = cv2.resize(self.wizard_hat, (hat_width, hat_height), interpolation=cv2.INTER_AREA)
+        # Overlay (resized hat is cached)
         return self._overlay_image_alpha(frame, resized_hat, hat_x, hat_y)
 
     def _overlay_image_alpha(self, background: np.ndarray, overlay: np.ndarray, x: int, y: int) -> np.ndarray:
