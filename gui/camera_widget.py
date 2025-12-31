@@ -55,37 +55,6 @@ class CameraThread(QThread):
         self.identification_thread: Optional[IdentificationThread] = None
         self.identification_requested = False
 
-        # Face detection for wizard hat using new MediaPipe API
-        try:
-            from mediapipe.tasks import python
-            from mediapipe.tasks.python import vision
-
-            # Download model if needed
-            model_path = os.path.join(os.getcwd(), "models", "face_detector.tflite")
-            if not os.path.exists(model_path):
-                os.makedirs(os.path.dirname(model_path), exist_ok=True)
-                import urllib.request
-                model_url = "https://storage.googleapis.com/mediapipe-models/face_detector/blaze_face_short_range/float16/1/blaze_face_short_range.tflite"
-                print("Downloading face detection model...")
-                urllib.request.urlretrieve(model_url, model_path)
-                print("Model downloaded successfully")
-
-            base_options = python.BaseOptions(model_asset_path=model_path)
-            options = vision.FaceDetectorOptions(
-                base_options=base_options,
-                min_detection_confidence=0.5
-            )
-            self.face_detection = vision.FaceDetector.create_from_options(options)
-        except Exception as e:
-            print(f"Warning: Could not initialize face detection: {e}")
-            self.face_detection = None
-        # Load wizard hat image
-        hat_path = os.path.join(os.getcwd(), "assets", "images", "wizard_hat.png")
-        self.wizard_hat = cv2.imread(hat_path, cv2.IMREAD_UNCHANGED)
-        if self.wizard_hat is None:
-            print(f"Warning: Could not load wizard hat from {hat_path}")
-        else:
-            print(f"Loaded wizard hat: {self.wizard_hat.shape}")
         
     def start_capture(self, camera_index: int = 0):
         """Start video capture."""
@@ -180,10 +149,6 @@ class CameraThread(QThread):
             if wand_tip:
                 visual_tip = wand_tip
 
-            # Add wizard hat overlay on face
-            if self.wizard_hat is not None and self.face_detection is not None:
-                frame = self._overlay_wizard_hat(frame)
-            
             # Draw spell effects
             # Use finger tip position directly (wand drawing removed)
             final_effect_pos = wand_tip_normalized if landmarks else None
@@ -214,9 +179,6 @@ class CameraThread(QThread):
 
             # Emit processed frame
             self.frame_ready.emit(frame)
-
-            # Small delay to prevent overwhelming the system
-            self.msleep(33)  # ~30 FPS
     
     def on_identification_complete(self, object_name: str):
         """Handle identification completion."""
@@ -237,142 +199,6 @@ class CameraThread(QThread):
         if self.identification_thread:
             self.identification_thread.wait()
             self.identification_thread = None
-
-    def _overlay_wizard_hat(self, frame: np.ndarray) -> np.ndarray:
-        """Overlay wizard hat on detected faces."""
-        try:
-            # Convert to RGB for MediaPipe
-            rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-
-            # Create MediaPipe Image
-            from mediapipe import Image, ImageFormat
-            mp_image = Image(image_format=ImageFormat.SRGB, data=rgb_frame)
-
-            # Detect faces
-            detection_result = self.face_detection.detect(mp_image)
-
-            if detection_result.detections:
-                h, w, _ = frame.shape
-                valid_face = self._find_best_face(detection_result.detections, w, h)
-                
-                if valid_face:
-                    frame = self._place_hat_on_face(frame, valid_face)
-        except Exception as e:
-            print(f"Error in overlay_wizard_hat: {e}")
-
-        return frame
-    
-    def _find_best_face(self, detections, frame_width: int, frame_height: int):
-        """Filter detections to find the best face (not hand)."""
-        valid_face = None
-        best_confidence = 0
-        
-        for detection in detections:
-            bbox = detection.bounding_box
-            x, y = bbox.origin_x, bbox.origin_y
-            box_w, box_h = bbox.width, bbox.height
-            
-            # Get confidence
-            confidence = 0.5
-            if hasattr(detection, 'score') and detection.score:
-                confidence = detection.score[0] if isinstance(detection.score, (list, tuple)) else detection.score
-            
-            # Apply filters
-            min_size, max_size = min(frame_width, frame_height) * 0.08, min(frame_width, frame_height) * 0.5
-            aspect_ratio = box_w / box_h if box_h > 0 else 0
-            center_x, center_y = x + box_w / 2, y + box_h / 2
-            
-            if not (min_size <= box_w <= max_size and min_size <= box_h <= max_size):
-                continue  # Size filter
-            if not (0.6 <= aspect_ratio <= 1.4):
-                continue  # Aspect ratio filter
-            if center_y > frame_height * 0.8:
-                continue  # Position filter (upper 80%)
-            if confidence < 0.5:
-                continue  # Confidence filter
-            if center_x < frame_width * 0.05 or center_x > frame_width * 0.95:
-                continue  # Edge position filter
-            
-            # Keep best confidence
-            if confidence > best_confidence:
-                best_confidence = confidence
-                valid_face = detection
-        
-        return valid_face
-    
-    def _place_hat_on_face(self, frame: np.ndarray, face_detection) -> np.ndarray:
-        """Place wizard hat on detected face."""
-        bbox = face_detection.bounding_box
-        x, y = bbox.origin_x, bbox.origin_y
-        box_w, box_h = bbox.width, bbox.height
-        h, w, _ = frame.shape
-        
-        # Adaptive hat size: face large (near camera) → hat smaller
-        # Calculate face ratio so với frame
-        face_ratio = max(box_w / w, box_h / h)
-        if face_ratio > 0.3:
-            hat_scale = 1.2 - (face_ratio - 0.3) * 1.5
-            hat_scale = max(0.75, hat_scale)
-        else:
-            hat_scale = 1.2
-        
-        # Calculate hat size
-        hat_width = int(box_w * hat_scale)
-        hat_height = int(hat_width * self.wizard_hat.shape[0] / self.wizard_hat.shape[1])
-        
-        # Calculate hat position (on top of head)
-        hat_x = x - (hat_width - box_w) // 2
-        head_top = y - int(box_h * 0.2)  # Estimate head top (face box starts at forehead)
-        hat_y = head_top - int(hat_height * 0.9)  # Place hat on head with slight overlap
-        
-        if hat_y + hat_height < 0:
-            hat_y = -int(hat_height * 0.3)
-        elif hat_y < 0:
-            pass
-        else:
-            hat_y = max(0, hat_y)
-        
-        # Resize and overlay
-        resized_hat = cv2.resize(self.wizard_hat, (hat_width, hat_height), interpolation=cv2.INTER_AREA)
-        return self._overlay_image_alpha(frame, resized_hat, hat_x, hat_y)
-
-    def _overlay_image_alpha(self, background: np.ndarray, overlay: np.ndarray, x: int, y: int) -> np.ndarray:
-        """Overlay image with alpha channel."""
-        bg_h, bg_w = background.shape[:2]
-        ov_h, ov_w = overlay.shape[:2]
-
-        # Clip overlay to fit within background
-        if x >= bg_w or y >= bg_h or x + ov_w <= 0 or y + ov_h <= 0:
-            return background
-
-        # Calculate valid overlay region
-        x1 = max(0, x)
-        y1 = max(0, y)
-        x2 = min(bg_w, x + ov_w)
-        y2 = min(bg_h, y + ov_h)
-
-        # Calculate overlay crop
-        ov_x1 = x1 - x
-        ov_y1 = y1 - y
-        ov_x2 = ov_x1 + (x2 - x1)
-        ov_y2 = ov_y1 + (y2 - y1)
-
-        # Crop overlay
-        overlay_crop = overlay[ov_y1:ov_y2, ov_x1:ov_x2]
-
-        if overlay_crop.shape[2] == 4:  # Has alpha channel
-            alpha = overlay_crop[:, :, 3] / 255.0
-            alpha = np.expand_dims(alpha, axis=2)
-
-            # Blend
-            background[y1:y2, x1:x2] = (
-                alpha * overlay_crop[:, :, :3] +
-                (1 - alpha) * background[y1:y2, x1:x2]
-            ).astype(np.uint8)
-        else:
-            background[y1:y2, x1:x2] = overlay_crop
-
-        return background
 
     def stop(self):
         """Stop video capture."""
