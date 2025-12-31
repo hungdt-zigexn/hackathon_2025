@@ -1,7 +1,7 @@
 import os
 from PyQt6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QPushButton, 
-    QLabel, QMessageBox, QProgressBar
+    QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
+    QLabel, QMessageBox, QProgressBar, QSizePolicy
 )
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import QFont
@@ -11,6 +11,7 @@ from core.story_manager import StoryManager, StoryStepType
 from core.spell_engine import SpellType
 from gui.camera_widget import CameraWidget
 from gui.utils import SpellVerificationThread
+from gui.theme import HOGWARTS_STYLE
 
 class StoryScreen(QWidget):
     """Game screen handling the storyline and spell casting."""
@@ -32,135 +33,146 @@ class StoryScreen(QWidget):
         self.success_timer = QTimer(self)
         self.success_timer.setSingleShot(True)
         self.success_timer.timeout.connect(self.next_level)
-        
+
         self.retry_count = 0
+
+        # 🏰 Hogwarts Wizarding UI – Global Stylesheet
+        self.setStyleSheet(HOGWARTS_STYLE)
+
         self.init_ui()
         
-    def set_status_message(self, text: str, style_type: str = "info"):
+    def set_status_message(self, text, style="info"):
+        # Apply status-specific styling using setProperty for dynamic theming
+        self.status_label.setProperty("statusStyle", style)
+
+        # Force stylesheet refresh
+        self.status_label.style().unpolish(self.status_label)
+        self.status_label.style().polish(self.status_label)
+
+        self.status_label.setText(f"✧ {text} ✧")
+
+    def set_camera_spell_state(self, state=None):
+        """Set the spell state for camera mirror glow effects.
+
+        Args:
+            state: "active" for active spell glow, "patronus" for patronus glow, None to clear
         """
-        Update status label with consistent styling.
-        style_type: 'info', 'listening', 'success', 'error'
+        self.camera_widget.setProperty("spellState", state)
+
+        # Force stylesheet refresh
+        self.camera_widget.style().unpolish(self.camera_widget)
+        self.camera_widget.style().polish(self.camera_widget)
+
+    def set_cinematic_mode(self, enabled=False):
+        """Enable/disable cinematic mode for Expecto Patronum.
+
+        Args:
+            enabled: True to enable cinematic mode, False to disable
         """
-        base_style = """
-            QLabel {
-                padding: 15px;
-                border-radius: 10px;
-                font-size: 18px;
-                font-weight: bold;
-                border: 2px solid;
-            }
-        """
-        
-        styles = {
-            "info": """
-                background-color: #2c3e50;
-                color: #ecf0f1;
-                border-color: #34495e;
-            """,
-            "listening": """
-                background-color: #f39c12;
-                color: #ffffff;
-                border-color: #e67e22;
-            """,
-            "success": """
-                background-color: #27ae60;
-                color: #ffffff;
-                border-color: #2ecc71;
-            """,
-            "error": """
-                background-color: #c0392b;
-                color: #ffffff;
-                border-color: #e74c3c;
-            """,
-            "validating": """
-                background-color: #8e44ad;
-                color: #ffffff;
-                border-color: #9b59b6;
-            """
-        }
-        
-        specific_style = styles.get(style_type, styles["info"])
-        self.status_label.setStyleSheet(base_style + specific_style)
-        self.status_label.setText(text)
+        if enabled:
+            self.setObjectName("CinematicMode")
+        else:
+            self.setObjectName("")
+
+        # Force stylesheet refresh
+        self.style().unpolish(self)
+        self.style().polish(self)
 
     def init_ui(self):
         layout = QVBoxLayout()
-        layout.setSpacing(15)
-        layout.setContentsMargins(20, 20, 20, 20)
+        layout.setSpacing(15)  # Balanced spacing between widgets
+        layout.setContentsMargins(30, 30, 30, 20)  # Reduced bottom margin
         
-        # Header: Level Title
+        # 📜 TITLE – Ancient Chapter Header
         self.title_label = QLabel("")
+        self.title_label.setObjectName("TitleLabel")
         self.title_label.setFont(QFont("Arial", 20, QFont.Weight.Bold))
         self.title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(self.title_label)
         
-        # Narrative Text
+        # 📖 STORY PANEL – Parchment Scroll
         self.story_text = QLabel("")
+        self.story_text.setObjectName("StoryText")
         self.story_text.setFont(QFont("Arial", 14))
         self.story_text.setWordWrap(True)
         self.story_text.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.story_text.setStyleSheet("background-color: #f8f9fa; padding: 15px; border-radius: 10px;")
+
         layout.addWidget(self.story_text)
         
-        # Camera Feed
+        # 📦 CAMERA + HUD CONTAINER – Keep them together
+        self.camera_hud_container = QWidget()
+        camera_hud_layout = QVBoxLayout(self.camera_hud_container)
+        camera_hud_layout.setSpacing(0)  # No spacing between camera and HUD
+        camera_hud_layout.setContentsMargins(0, 0, 0, 0)
+
+        # 🪞 CAMERA – Magic Mirror / Pensieve
         self.camera_widget = CameraWidget()
-        self.camera_widget.spell_identified.connect(self.on_patronum_identified)
-        layout.addWidget(self.camera_widget)
-        
-        # Status/Instruction Bar
+        self.camera_widget.setObjectName("CameraMirror")
+        self.camera_widget.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+
+        # Removed spell_identified connection - patronus success now handled automatically
+        camera_hud_layout.addWidget(self.camera_widget, stretch=1)  # Camera expands within container
+
+        # 🪄 SPELL HUD – Status + Mana Control Zone
+        self.spell_hud = QWidget()
+        self.spell_hud.setObjectName("SpellHUD")
+
+        hud_layout = QVBoxLayout(self.spell_hud)
+        hud_layout.setSpacing(8)
+        hud_layout.setContentsMargins(12, 10, 12, 5)
+
+        # 🪄 STATUS BAR – Spell Aura
         self.status_label = QLabel("Hãy đọc phép thuật khi bạn sẵn sàng")
+        self.status_label.setObjectName("StatusBar")
         self.status_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.status_label.setWordWrap(True)
+        self.status_label.setMinimumHeight(56)
         self.set_status_message("Hãy đọc phép thuật khi bạn sẵn sàng", "info")
-        layout.addWidget(self.status_label)
-        
-        # Progress Bar (for recording duration)
+        hud_layout.addWidget(self.status_label)
+
+        # ⚡ MANA BAR – Magical Energy
         self.progress_bar = QProgressBar()
         self.progress_bar.setTextVisible(False)
-        self.progress_bar.setFixedHeight(5)
+        self.progress_bar.setFixedHeight(8)
         self.progress_bar.setRange(0, 1)
         self.progress_bar.setValue(0)
-        self.progress_bar.setStyleSheet("QProgressBar { background: #e0e0e0; border: none; } QProgressBar::chunk { background: #28a745; }")
-        layout.addWidget(self.progress_bar)
-        
-        # Button Style
-        button_style = """
-            QPushButton {
-                background-color: #5e1a1a;
-                color: #f8f9fa;
-                border-radius: 12px;
-                border: 2px solid #f8f9fa;
-                padding: 10px 20px;
-                font-weight: bold;
-                font-size: 16px;
-            }
-            QPushButton:hover {
-                background-color: #782020;
-            }
-            QPushButton:pressed {
-                background-color: #441313;
-            }
-            QPushButton:disabled {
-                background-color: #3d1111;
-                color: #aaaaaa;
-                border: 2px solid #aaaaaa;
-            }
-        """
+        hud_layout.addWidget(self.progress_bar)
 
-        # Hidden buttons for touch support if needed (primary interaction is voice)
-        self.controls_layout = QHBoxLayout()
-        self.exit_btn = QPushButton("Thoát")
-        self.exit_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.exit_btn.setStyleSheet(button_style)
-        self.exit_btn.clicked.connect(self.exit_game)
-        self.controls_layout.addWidget(self.exit_btn)
+        camera_hud_layout.addWidget(self.spell_hud, stretch=0)  # HUD stays at bottom
+
+        # Add camera+HUD container to main layout
+        layout.addWidget(self.camera_hud_container, stretch=1)  # Container takes remaining space
         
-        self.next_btn = QPushButton("Next Level →")
-        self.next_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.next_btn.clicked.connect(self.on_control_clicked)
-        self.next_btn.setVisible(False)
-        self.next_btn.setStyleSheet(button_style)
-        self.controls_layout.addWidget(self.next_btn)
+        # 🧙 BUTTONS – Wizard Controls (styles now handled globally)
+
+        # Navigation and control buttons
+        self.controls_layout = QHBoxLayout()
+
+        # Navigation buttons
+        self.back_btn = QPushButton("← Quay lại")
+        self.back_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.back_btn.clicked.connect(self.go_back)
+        self.back_btn.setVisible(False)
+        self.controls_layout.addWidget(self.back_btn)
+
+        # Action buttons (skip/retry/next)
+        self.skip_btn = QPushButton("Bỏ qua")
+        self.skip_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.skip_btn.clicked.connect(self.skip_current_step)
+        self.skip_btn.setVisible(False)
+        self.controls_layout.addWidget(self.skip_btn)
+
+        self.retry_btn = QPushButton("Thử lại")
+        self.retry_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.retry_btn.clicked.connect(self.retry_current_spell)
+        self.retry_btn.setVisible(False)
+        self.controls_layout.addWidget(self.retry_btn)
+
+        self.next_spell_btn = QPushButton("Phép tiếp theo →")
+        self.next_spell_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.next_spell_btn.clicked.connect(self.go_next_spell)
+        self.next_spell_btn.setVisible(False)
+        self.controls_layout.addWidget(self.next_spell_btn)
         
         layout.addLayout(self.controls_layout)
         
@@ -169,9 +181,51 @@ class StoryScreen(QWidget):
         # Keep focus for accessibility/keyboard shortcuts
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
 
+    def go_back(self):
+        """Go back to the previous spell."""
+        if self.story_manager.go_back():
+            self.load_step()
+
+    def go_next_spell(self):
+        """Go to the next spell (after completion)."""
+        step = self.story_manager.get_current_step()
+        if step and not step.next_step_id:
+            # Final spell - exit game
+            self.exit_game()
+        else:
+            # Go to next spell
+            self.next_level()
+
+    def skip_current_step(self):
+        """Skip the current step and advance to the next one."""
+        if self.story_manager.skip_step():
+            self.load_step()
+        else:
+            # No more steps, end game
+            self.exit_game()
+
+    def retry_current_spell(self):
+        """Retry the current spell attempt."""
+        # Reset completion state
+        self.level_completed = False
+        self.retry_btn.setVisible(False)
+        self.next_spell_btn.setVisible(False)
+
+        # Reset UI to show skip button and spell interface
+        self.skip_btn.setVisible(True)
+
+        # Restart the spell process
+        step = self.story_manager.get_current_step()
+        if step and step.step_type == StoryStepType.PRACTICE:
+            self.start_listening()
+        elif step and step.step_type == StoryStepType.EXPLANATION:
+            # For explanation steps, just show the next button
+            self.next_spell_btn.setText("Bắt đầu →")
+            self.next_spell_btn.setVisible(True)
+
     def on_control_clicked(self):
-        """Handle main control button click (Next/Start/Try Again)."""
-        if self.next_btn.text() == "Kết thúc":
+        """Handle main control button click (Next/Start/Continue)."""
+        if self.next_spell_btn.text() == "Kết thúc":
             self.exit_game()
             return
 
@@ -181,10 +235,7 @@ class StoryScreen(QWidget):
 
         if self.level_completed or step.step_type == StoryStepType.EXPLANATION:
             self.next_level()
-        else:
-            # Retry case for Practice steps
-            self.next_btn.setVisible(False)
-            self.start_listening()
+        # Note: Retry functionality is now handled by the dedicated retry button
 
     def start_game(self):
         """Initialize game state."""
@@ -233,6 +284,11 @@ class StoryScreen(QWidget):
         self.progress_bar.setRange(0, 1)
         self.progress_bar.setValue(0)
         self.success_timer.stop()
+        self.retry_btn.setVisible(False)  # Hide retry button when loading new step
+        self.next_spell_btn.setVisible(False)  # Hide next spell button when loading new step
+
+        # Show back button if not on first step
+        self.back_btn.setVisible(step.id > 1)
 
         # Reset spell engine visuals between steps
         if self.camera_widget.spell_engine:
@@ -249,13 +305,17 @@ class StoryScreen(QWidget):
                 f"Giới thiệu phép: học '{spell_name}' rồi nhấn Bắt đầu.",
                 "info"
             )
-            self.next_btn.setText("Bắt đầu →")
-            self.next_btn.setVisible(True)
-            self.next_btn.setEnabled(True)
+            self.next_spell_btn.setText("Bắt đầu →")
+            self.next_spell_btn.setVisible(True)
+            self.next_spell_btn.setEnabled(True)
+            self.skip_btn.setVisible(True)
+            self.skip_btn.setEnabled(True)
         else:
             spell_name = step.required_spell.value if step.required_spell else "phép thuật"
             self.set_status_message(f"Hãy nói '{spell_name}' khi bạn sẵn sàng.", "info")
-            self.next_btn.setVisible(False)
+            self.next_spell_btn.setVisible(False)
+            self.skip_btn.setVisible(True)
+            self.skip_btn.setEnabled(True)
             # Start automatic listening shortly after practice step loads
             self.schedule_spell_detection(delay_ms=1500)
     
@@ -295,7 +355,7 @@ class StoryScreen(QWidget):
         self.auto_retry_timer.stop()
         self.is_listening = True
         spell_name = step.required_spell.value
-        self.set_status_message(f"Đang nghe '{spell_name}'... Hãy nói rõ ràng.", "listening")
+        self.set_status_message("🪄 Ma lực đang lắng nghe lời gọi của bạn... Hãy nói rõ ràng.", "listening")
         self.progress_bar.setRange(0, 0)
 
         is_retry = self.retry_count > 0
@@ -318,38 +378,44 @@ class StoryScreen(QWidget):
         if not self.game_active:
             return
 
-        self.set_status_message("Vẽ Patronus của bạn bằng đũa phép! (5 giây)", "info")
-        self.progress_bar.setRange(0, 0) # Indeterminate
+        self.set_status_message("✨ Hãy vẽ ký hiệu theo luồng ánh sáng để triệu hồi Thần hộ mệnh ✨", "info")
+        self.progress_bar.setRange(0, 100) # Show progress
+        self.progress_bar.setValue(0)
 
         # Activate spell to start recording
         self.camera_widget.get_spell_engine().activate_spell(SpellType.EXPECTO_PATRONUM)
 
-        # Schedule completion (UI update only, engine handles timing internally but good to sync)
-        QTimer.singleShot(5000, self.finish_patronum_drawing)
+        # Start monitoring for Patronus appearance
+        self._patronus_monitor_timer = QTimer(self)
+        self._patronus_monitor_timer.timeout.connect(self._check_patronus_status)
+        self._patronus_monitor_timer.start(100)  # Check every 100ms
 
-    def finish_patronum_drawing(self):
-        """Drawing phase finished, waiting for identification."""
+    def _check_patronus_status(self):
+        """Check if Patronus has appeared and handle completion."""
         if not self.game_active:
+            self._patronus_monitor_timer.stop()
             return
 
-        self.set_status_message("Đang nhận diện Patronus của bạn...", "validating")
+        spell_engine = self.camera_widget.get_spell_engine()
+        expecto_spell = spell_engine.expecto_patronum
 
-    def on_patronum_identified(self, object_name: str):
-        """Handle successful Patronus identification."""
-        if not self.game_active:
-            return
+        # Check if Patronus has appeared (locked state)
+        if expecto_spell.patronus_locked and expecto_spell.image is not None:
+            self._patronus_monitor_timer.stop()
+            self.progress_bar.setRange(0, 1)
+            self.progress_bar.setValue(1)
 
-        # Only proceed if we are in the right step
-        step = self.story_manager.get_current_step()
-        if not step or step.required_spell != SpellType.EXPECTO_PATRONUM:
-            return
-            
-        # Treat as success
-        self.handle_practice_success(f"Bạn đã vẽ một {object_name}!")
+            # Handle the spell completion properly
+            step = self.story_manager.get_current_step()
+            if step and step.required_spell == SpellType.EXPECTO_PATRONUM:
+                self.handle_practice_success("Patronus của bạn đã hiện hình!")
+                print("[DEBUG] Patronus appeared - completion handled")
+
+    # Removed on_patronum_identified - patronus success now handled automatically
 
     def on_recording_finished(self):
         """Called when audio recording is done, but verification is still in progress."""
-        self.set_status_message("Đang xác minh phép thuật...", "validating")
+        self.set_status_message("Đang giải mã phép thuật...", "validating")
 
     def on_verification_complete(self, is_correct: bool, feedback: str):
         self.is_listening = False
@@ -367,16 +433,18 @@ class StoryScreen(QWidget):
         if is_correct:
             self.handle_practice_success(feedback)
         else:
+            print(f"[DEBUG] Verification failed! Showing retry button. Retry count: {self.retry_count}")
             self.retry_count += 1
             retry_feedback = feedback or "Chưa chính xác lắm."
             self.set_status_message(
-                f"{retry_feedback}\nNhấn 'Thử lại' để thử lần nữa.",
+                f"{retry_feedback}\nNhấn 'Thử lại' để thử lần nữa hoặc 'Bỏ qua' để bỏ qua phép này.",
                 "error"
             )
-            self.next_btn.setText("Thử lại")
-            self.next_btn.setVisible(True)
-            self.next_btn.setEnabled(True)
-            self.next_btn.setFocus()
+            self.retry_btn.setVisible(True)
+            self.retry_btn.setEnabled(True)
+            self.skip_btn.setVisible(True)  # Keep skip button visible for retries
+            self.retry_btn.setFocus()
+            print(f"[DEBUG] Retry button should now be visible: {self.retry_btn.isVisible()}")
     
     def _cleanup_verification_thread(self):
         """Clean up the verification thread after it finishes."""
@@ -404,24 +472,32 @@ class StoryScreen(QWidget):
             success_text = f"{success_text}\n{feedback}"
         self.set_status_message(success_text, "success")
 
-        # Show Next button - wait for user to click Continue
+        # Show completion options - retry or continue to next spell
         if step.next_step_id:
-            self.next_btn.setText("Tiếp tục →")
-            self.next_btn.setVisible(True)
-            self.next_btn.setEnabled(True)
-            self.next_btn.setFocus()  # Move focus to next button
-            # No auto-advance - user must click Continue to proceed
+            # Not the final spell - show retry and next options
+            self.retry_btn.setVisible(True)
+            self.retry_btn.setEnabled(True)
+            self.next_spell_btn.setText("Phép tiếp theo →")
+            self.next_spell_btn.setVisible(True)
+            self.next_spell_btn.setEnabled(True)
+            self.skip_btn.setVisible(False)  # Hide skip during completion
+            self.retry_btn.setFocus()
         else:
-            self.set_status_message("Chúc mừng! Bạn đã hoàn thành game!", "success")
-            self.next_btn.setText("Kết thúc")
-            self.next_btn.setVisible(True)
-            self.next_btn.setEnabled(True)
-            self.next_btn.setFocus()
+            # Final spell completed - show completion and exit option
+            self.set_status_message("Chúc mừng! Bạn đã hoàn thành khóa học phù thủy nghiệp dư!", "success")
+            self.next_spell_btn.setText("Kết thúc")
+            self.next_spell_btn.setVisible(True)
+            self.next_spell_btn.setEnabled(True)
+            self.next_spell_btn.setFocus()
+            self.retry_btn.setVisible(False)
+            self.skip_btn.setVisible(False)
 
     def next_level(self):
         self.auto_retry_timer.stop()
         self.success_timer.stop()
-        
+        if hasattr(self, '_patronus_monitor_timer'):
+            self._patronus_monitor_timer.stop()
+
         # Prevent skipping practice steps if not completed
         step = self.story_manager.get_current_step()
         if step and step.step_type == StoryStepType.PRACTICE and not self.level_completed:
@@ -435,6 +511,8 @@ class StoryScreen(QWidget):
         self.game_active = False
         self.auto_retry_timer.stop()
         self.success_timer.stop()
+        if hasattr(self, '_patronus_monitor_timer'):
+            self._patronus_monitor_timer.stop()
         if self.verification_thread:
             # Disconnect any pending signals to avoid callbacks after cleanup
             try:
