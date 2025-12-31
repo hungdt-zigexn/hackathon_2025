@@ -2,14 +2,13 @@
 Vera Verto spell implementation - transforms objects with magical effects.
 """
 import cv2
-import math
 import os
 import numpy as np
 from typing import Optional, Tuple
 from .base import BaseSpell
 
 class VeraVertoSpell(BaseSpell):
-    """Vera Verto spell - transforms objects with simple smoke effect."""
+    """Vera Verto spell - transforms objects with video smoke effect."""
     
     def __init__(self, frame_width: int, frame_height: int):
         super().__init__(frame_width, frame_height)
@@ -35,9 +34,14 @@ class VeraVertoSpell(BaseSpell):
         self._cached_bird_size = None
         self._cached_water_glass_size = None
         
-        # Simple smoke effect (only when transforming)
-        self.smoke_particles = []
-        self.max_smoke_particles = 15  # Reduced for performance
+        # Smoke video effect (using actual video frames)
+        self.smoke_video_frames = []
+        self.smoke_video_path = os.path.join(os.getcwd(), "assets", "videos", "smoke_video.mov")
+        # Cache for resized smoke frames (performance optimization)
+        self._cached_smoke_frame_index = -1
+        self._cached_smoke_size = None
+        self._cached_resized_smoke = None
+        self._load_smoke_video()
         
         # Touch detection
         self.wand_touched = False
@@ -65,6 +69,67 @@ class VeraVertoSpell(BaseSpell):
         else:
             print(f"Loaded water glass image: {self.water_glass_image.shape}")
     
+    def _load_smoke_video(self):
+        """Load smoke video and extract frames with optimized processing."""
+        if not os.path.exists(self.smoke_video_path):
+            print(f"Warning: Smoke video not found at {self.smoke_video_path}")
+            return
+        
+        cap = cv2.VideoCapture(self.smoke_video_path)
+        if not cap.isOpened():
+            print(f"Warning: Could not open smoke video at {self.smoke_video_path}")
+            return
+        
+        # Get video properties for optimization
+        original_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        original_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        # Downscale to max 800px for performance (maintain aspect ratio)
+        max_dimension = 800
+        if max(original_width, original_height) > max_dimension:
+            scale = max_dimension / max(original_width, original_height)
+            target_w = int(original_width * scale)
+            target_h = int(original_height * scale)
+        else:
+            target_w, target_h = original_width, original_height
+        
+        self.smoke_video_frames = []
+        frame_count = 0
+        
+        # Process first frame to detect background type (performance: only check once)
+        ret, first_frame = cap.read()
+        if ret:
+            gray = cv2.cvtColor(first_frame, cv2.COLOR_BGR2GRAY)
+            avg_brightness = np.mean(gray)
+            is_white_bg = avg_brightness > 127
+            cap.set(cv2.CAP_PROP_POS_FRAMES, 0)  # Reset to beginning
+        
+        while True:
+            ret, frame = cap.read()
+            if not ret:
+                break
+            
+            # Downscale frame for performance
+            if frame.shape[1] != target_w or frame.shape[0] != target_h:
+                frame = cv2.resize(frame, (target_w, target_h), interpolation=cv2.INTER_AREA)
+            
+            # Convert BGR to BGRA (add alpha channel)
+            if frame.shape[2] == 3:
+                gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+                alpha = 255 - gray if is_white_bg else gray
+                alpha = cv2.equalizeHist(alpha)
+                frame_bgra = cv2.merge([frame[:, :, 0], frame[:, :, 1], frame[:, :, 2], alpha])
+            else:
+                frame_bgra = frame
+            
+            self.smoke_video_frames.append(frame_bgra)
+            frame_count += 1
+        
+        cap.release()
+        print(f"Loaded {frame_count} frames from smoke video (downscaled to {target_w}x{target_h})")
+        
+        if len(self.smoke_video_frames) == 0:
+            print(f"Warning: No frames extracted from smoke video")
+    
     def setup_scene(self):
         """Setup scene for Vera Verto - show object ready for transformation."""
         self.animation_time = 0.0
@@ -83,14 +148,14 @@ class VeraVertoSpell(BaseSpell):
         self.active = True
         self._ready_for_display = True
         
-        # Clear smoke particles
-        self.smoke_particles = []
-        
-        # Invalidate cache to force resize
+        # Invalidate caches
         self._cached_bird = None
         self._cached_water_glass = None
         self._cached_bird_size = None
         self._cached_water_glass_size = None
+        self._cached_smoke_frame_index = -1
+        self._cached_smoke_size = None
+        self._cached_resized_smoke = None
     
     def activate(self, finger_pos: Optional[Tuple[float, float]] = None):
         """Activate Vera Verto transformation - mark voice as verified."""
@@ -98,29 +163,9 @@ class VeraVertoSpell(BaseSpell):
             self.voice_verified = True
             # Check if wand is already touching (transformation will start in update if both conditions met)
     
-    def _init_smoke(self):
-        """Initialize simple smoke particles (only when transforming)."""
-        if not self.source_object_pos:
-            return
-        
-        self.smoke_particles = []
-        obj_x, obj_y = self.source_object_pos
-        
-        for _ in range(self.max_smoke_particles):
-            angle = np.random.uniform(0, 2 * math.pi)
-            speed = np.random.uniform(20, 40)
-            self.smoke_particles.append({
-                'x': float(obj_x),
-                'y': float(obj_y),
-                'vx': speed * math.cos(angle),
-                'vy': speed * math.sin(angle) - 10,  # Upward bias
-                'size': np.random.uniform(8, 20),
-                'alpha': np.random.uniform(0.4, 0.8),
-                'life': np.random.uniform(0.8, 1.5)
-            })
     
     def _check_wand_touch(self, wand_pos: Optional[Tuple[float, float]]) -> bool:
-        """Check if wand is touching the object."""
+        """Check if wand is touching the object (optimized: no sqrt)."""
         if not wand_pos or not self.source_object_pos:
             return False
         
@@ -134,8 +179,10 @@ class VeraVertoSpell(BaseSpell):
         obj_x, obj_y = self.source_object_pos
         
         # Check distance
-        distance = math.sqrt((wand_x - obj_x) ** 2 + (wand_y - obj_y) ** 2)
-        return distance <= self.touch_threshold
+        dx, dy = wand_x - obj_x, wand_y - obj_y
+        distance_sq = dx * dx + dy * dy
+        threshold_sq = self.touch_threshold * self.touch_threshold
+        return distance_sq <= threshold_sq
     
     def deactivate(self):
         """Deactivate Vera Verto spell."""
@@ -145,7 +192,6 @@ class VeraVertoSpell(BaseSpell):
         self._ready_for_display = False
         self.wand_touched = False
         self.voice_verified = False
-        self.smoke_particles = []
     
     def update(self, dt: float, finger_pos: Optional[Tuple[float, float]] = None):
         """Update Vera Verto animation."""
@@ -163,8 +209,6 @@ class VeraVertoSpell(BaseSpell):
                 self.state = 'transforming'
                 self.start_time = self.animation_time
                 self.transformation_progress = 0.0
-                # Initialize smoke particles
-                self._init_smoke()
         
         # Update transformation
         if self.state == 'transforming':
@@ -174,113 +218,106 @@ class VeraVertoSpell(BaseSpell):
                 
                 if self.transformation_progress >= 1.0:
                     self.state = 'transformed'
-            
-            # Update smoke particles (only during transformation)
-            self._update_smoke(dt)
-    
-    def _update_smoke(self, dt: float):
-        """Update simple smoke particles (only during transformation)."""
-        if not self.source_object_pos:
-            return
-        
-        obj_x, obj_y = self.source_object_pos
-        
-        # Update existing particles
-        for particle in self.smoke_particles[:]:
-            particle['x'] += particle['vx'] * dt
-            particle['y'] += particle['vy'] * dt
-            particle['life'] -= dt
-            particle['alpha'] *= 0.98  # Fade out
-            particle['size'] += 5 * dt  # Expand
-            
-            # Remove dead particles
-            if particle['life'] <= 0 or particle['alpha'] < 0.1:
-                self.smoke_particles.remove(particle)
-        
-        # Add new particles (up to max)
-        if len(self.smoke_particles) < self.max_smoke_particles and self.transformation_progress < 0.8:
-            angle = np.random.uniform(0, 2 * math.pi)
-            speed = np.random.uniform(20, 40)
-            self.smoke_particles.append({
-                'x': float(obj_x),
-                'y': float(obj_y),
-                'vx': speed * math.cos(angle),
-                'vy': speed * math.sin(angle) - 10,
-                'size': np.random.uniform(8, 15),
-                'alpha': np.random.uniform(0.4, 0.8),
-                'life': np.random.uniform(0.8, 1.5)
-            })
     
     def draw(self, frame: np.ndarray, finger_pos: Optional[Tuple[float, float]] = None) -> np.ndarray:
-        """Draw Vera Verto transformation effects - simple and performant."""
+        """Draw Vera Verto transformation effects."""
         if (not self._ready_for_display and not self.active) or not self.source_object_pos:
             return frame
-        
-        # Draw source object (before transformation)
+
         if self.state in ['ready', 'transforming']:
             frame = self._draw_source_object(frame)
-        
-        # Draw smoke effect (only during transformation)
+
         if self.state == 'transforming':
             frame = self._draw_smoke(frame)
-            # Show partial transformation
-            frame = self._draw_partial_transformation(frame)
-        
-        # Draw target object (after transformation)
+            if self.transformation_progress > 0.7:
+                glass_opacity = (self.transformation_progress - 0.7) / 0.3
+                frame = self._draw_target_object(frame, opacity=glass_opacity)
         if self.state == 'transformed':
             frame = self._draw_target_object(frame)
         
         return frame
     
     def _draw_smoke(self, frame: np.ndarray) -> np.ndarray:
-        """Draw simple smoke particles (only during transformation)."""
-        for particle in self.smoke_particles:
-            x, y = int(particle['x']), int(particle['y'])
-            size = int(particle['size'])
-            alpha = particle['alpha']
-            
-            # Simple smoke circle (gray/white)
-            color = (200, 200, 200)  # Light gray
-            cv2.circle(frame, (x, y), size, color, -1)
-            # Add slight transparency effect with darker outline
-            cv2.circle(frame, (x, y), size, (150, 150, 150), 1)
+        """Draw smoke using video frames with caching for performance."""
+        if not self.smoke_video_frames or not self.source_object_pos:
+            return frame
         
-        return frame
+        num_frames = len(self.smoke_video_frames)
+        if num_frames == 0:
+            return frame
+        
+        # Calculate frame index (cached if same progress)
+        frame_index = self._get_smoke_frame_index(num_frames)
+        smoke_frame = self.smoke_video_frames[frame_index]
+        
+        # Get object position and target size
+        obj_x, obj_y = self.source_object_pos
+        target_size = int(self.object_size * 2.5)
+        target_size_tuple = (target_size, target_size)
+        
+        # Cache resized smoke frame (only resize when frame_index or size changes)
+        if (self._cached_smoke_frame_index != frame_index or 
+            self._cached_smoke_size != target_size_tuple):
+            
+            smoke_h, smoke_w = smoke_frame.shape[:2]
+            aspect = smoke_w / smoke_h if smoke_h > 0 else 1.0
+            
+            if aspect > 1.0:
+                new_w, new_h = target_size, int(target_size / aspect)
+            else:
+                new_h, new_w = target_size, int(target_size * aspect)
+            
+            self._cached_resized_smoke = cv2.resize(
+                smoke_frame, (new_w, new_h), 
+                interpolation=cv2.INTER_LINEAR
+            )
+            self._cached_smoke_frame_index = frame_index
+            self._cached_smoke_size = target_size_tuple
+        
+        # Overlay cached resized smoke
+        return self._overlay_image_alpha(frame, self._cached_resized_smoke, obj_x, obj_y)
+    
+    def _get_smoke_frame_index(self, num_frames: int) -> int:
+        """Calculate smoke video frame index from transformation progress."""
+        progress = self.transformation_progress
+        
+        if progress < 0.2:
+            frame_index = int((progress / 0.2) * num_frames * 0.3)
+        elif progress < 0.8:
+            frame_index = int(0.3 * num_frames + ((progress - 0.2) / 0.6) * num_frames * 0.7)
+        else:
+            frame_index = int(num_frames * 0.7 + ((progress - 0.8) / 0.2) * num_frames * 0.3)
+        
+        return min(frame_index, num_frames - 1)
     
     def _get_resized_bird(self) -> Optional[np.ndarray]:
         """Get resized bird image (cached for performance)."""
         if self.bird_image is None:
             return None
         
-        # Calculate current size with transformation progress
         scale_factor = 1.0 - self.transformation_progress * 0.3
-        current_target_size = int(self.object_size * scale_factor)
         
-        # Cache base size
-        cache_key = self.object_size
-        
-        if self._cached_bird is None or self._cached_bird_size != cache_key:
-            # Resize maintaining aspect ratio to base size
+        # Cache base resized image
+        if self._cached_bird is None or self._cached_bird_size != self.object_size:
             h, w = self.bird_image.shape[:2]
             aspect = w / h if h > 0 else 1.0
+            new_w = self.object_size if w > h else int(self.object_size * aspect)
+            new_h = int(self.object_size / aspect) if w > h else self.object_size
             
-            if w > h:
-                new_w = self.object_size
-                new_h = int(self.object_size / aspect)
-            else:
-                new_h = self.object_size
-                new_w = int(self.object_size * aspect)
-            
-            self._cached_bird = cv2.resize(self.bird_image, (new_w, new_h), interpolation=cv2.INTER_AREA)
-            self._cached_bird_size = cache_key
+            self._cached_bird = cv2.resize(
+                self.bird_image, (new_w, new_h), 
+                interpolation=cv2.INTER_AREA
+            )
+            self._cached_bird_size = self.object_size
         
-        # Resize from cache to current target size (only if scale changed significantly)
-        cached_h, cached_w = self._cached_bird.shape[:2]
-        target_w = int(cached_w * scale_factor)
-        target_h = int(cached_h * scale_factor)
-        
-        if abs(cached_w - target_w) > 2 or abs(cached_h - target_h) > 2:
-            return cv2.resize(self._cached_bird, (target_w, target_h), interpolation=cv2.INTER_AREA)
+        # Scale from cache if needed
+        if abs(scale_factor - 1.0) > 0.01:
+            cached_h, cached_w = self._cached_bird.shape[:2]
+            return cv2.resize(
+                self._cached_bird, 
+                (int(cached_w * scale_factor), int(cached_h * scale_factor)),
+                interpolation=cv2.INTER_AREA
+            )
         
         return self._cached_bird
     
@@ -289,142 +326,97 @@ class VeraVertoSpell(BaseSpell):
         if self.water_glass_image is None:
             return None
         
-        target_size = self.object_size
-        current_size = (target_size, target_size)
-        
-        if self._cached_water_glass is not None and self._cached_water_glass_size == current_size:
+        if self._cached_water_glass is not None and self._cached_water_glass_size == self.object_size:
             return self._cached_water_glass
         
         # Resize maintaining aspect ratio
         h, w = self.water_glass_image.shape[:2]
         aspect = w / h if h > 0 else 1.0
+        new_w = self.object_size if w > h else int(self.object_size * aspect)
+        new_h = int(self.object_size / aspect) if w > h else self.object_size
         
-        if w > h:
-            new_w = target_size
-            new_h = int(target_size / aspect)
-        else:
-            new_h = target_size
-            new_w = int(target_size * aspect)
-        
-        self._cached_water_glass = cv2.resize(self.water_glass_image, (new_w, new_h), interpolation=cv2.INTER_AREA)
-        self._cached_water_glass_size = current_size
+        self._cached_water_glass = cv2.resize(
+            self.water_glass_image, (new_w, new_h), 
+            interpolation=cv2.INTER_AREA
+        )
+        self._cached_water_glass_size = self.object_size
         return self._cached_water_glass
     
     def _overlay_image_alpha(self, background: np.ndarray, overlay: np.ndarray, x: int, y: int) -> np.ndarray:
-        """Overlay image with alpha channel."""
+        """Overlay image with alpha channel (optimized)."""
         bg_h, bg_w = background.shape[:2]
         ov_h, ov_w = overlay.shape[:2]
         
-        # Calculate center position
-        x = x - ov_w // 2
-        y = y - ov_h // 2
+        # Calculate center position and bounds
+        x1 = max(0, x - ov_w // 2)
+        y1 = max(0, y - ov_h // 2)
+        x2 = min(bg_w, x1 + ov_w)
+        y2 = min(bg_h, y1 + ov_h)
         
-        # Clip overlay to fit within background
-        if x >= bg_w or y >= bg_h or x + ov_w <= 0 or y + ov_h <= 0:
+        # Early exit if completely outside
+        if x1 >= bg_w or y1 >= bg_h or x2 <= 0 or y2 <= 0:
             return background
         
-        # Calculate valid overlay region
-        x1 = max(0, x)
-        y1 = max(0, y)
-        x2 = min(bg_w, x + ov_w)
-        y2 = min(bg_h, y + ov_h)
-        
-        # Calculate overlay crop
-        ov_x1 = x1 - x
-        ov_y1 = y1 - y
-        ov_x2 = ov_x1 + (x2 - x1)
-        ov_y2 = ov_y1 + (y2 - y1)
+        # Calculate crop regions
+        ov_x1, ov_y1 = x1 - (x - ov_w // 2), y1 - (y - ov_h // 2)
+        ov_x2, ov_y2 = ov_x1 + (x2 - x1), ov_y1 + (y2 - y1)
         
         # Crop overlay
         overlay_crop = overlay[ov_y1:ov_y2, ov_x1:ov_x2]
+        bg_roi = background[y1:y2, x1:x2]
         
-        if overlay_crop.shape[2] == 4:  # Has alpha channel
-            alpha = overlay_crop[:, :, 3] / 255.0
-            alpha = np.expand_dims(alpha, axis=2)
-            
-            # Blend
-            background[y1:y2, x1:x2] = (
-                alpha * overlay_crop[:, :, :3] +
-                (1 - alpha) * background[y1:y2, x1:x2]
-            ).astype(np.uint8)
+        # Alpha blending (optimized)
+        if overlay_crop.shape[2] == 4:
+            alpha = overlay_crop[:, :, 3:4].astype(np.float32) / 255.0
+            bg_roi[:] = (alpha * overlay_crop[:, :, :3] + (1 - alpha) * bg_roi).astype(np.uint8)
         else:
-            background[y1:y2, x1:x2] = overlay_crop
+            bg_roi[:] = overlay_crop
         
         return background
     
     def _draw_source_object(self, frame: np.ndarray) -> np.ndarray:
-        """Draw source object (bird image)."""
+        """Draw source object (bird image) with fade out."""
         if self.bird_image is None or not self.source_object_pos:
             return frame
         
-        x, y = self.source_object_pos
         resized_bird = self._get_resized_bird()
+        if resized_bird is None:
+            return frame
         
-        if resized_bird is not None:
-            # Fade out during transformation
-            opacity = 1.0 - self.transformation_progress * 0.7
-            if opacity > 0:
-                # Create temporary overlay with opacity
-                if resized_bird.shape[2] == 4:
-                    # Has alpha channel - multiply alpha
-                    overlay = resized_bird.copy()
-                    overlay[:, :, 3] = (overlay[:, :, 3] * opacity).astype(np.uint8)
-                    frame = self._overlay_image_alpha(frame, overlay, x, y)
-                else:
-                    # No alpha - blend directly
-                    frame = self._overlay_image_alpha(frame, resized_bird, x, y)
+        # Calculate opacity (fade out in first 30% of transformation)
+        opacity = max(0.0, 1.0 - (self.transformation_progress / 0.3)) if self.state == 'transforming' else 1.0
         
-        return frame
+        if opacity <= 0:
+            return frame
+        
+        # Apply opacity to alpha channel
+        if resized_bird.shape[2] == 4:
+            overlay = resized_bird.copy()
+            overlay[:, :, 3] = (overlay[:, :, 3] * opacity).astype(np.uint8)
+        else:
+            overlay = resized_bird
+        
+        return self._overlay_image_alpha(frame, overlay, *self.source_object_pos)
     
-    def _draw_target_object(self, frame: np.ndarray) -> np.ndarray:
-        """Draw target object (water glass image)."""
+    def _draw_target_object(self, frame: np.ndarray, opacity: float = 1.0) -> np.ndarray:
+        """Draw target object (water glass image) with optional opacity."""
         if self.water_glass_image is None or not self.target_object_pos:
             return frame
         
-        x, y = self.target_object_pos
         resized_glass = self._get_resized_water_glass()
-        
-        if resized_glass is not None:
-            frame = self._overlay_image_alpha(frame, resized_glass, x, y)
-        
-        return frame
-    
-    def _draw_partial_transformation(self, frame: np.ndarray) -> np.ndarray:
-        """Draw partial transformation (morphing between bird and water glass)."""
-        if self.bird_image is None or self.water_glass_image is None:
+        if resized_glass is None:
             return frame
         
-        source_x, source_y = self.source_object_pos
-        target_x, target_y = self.target_object_pos
+        # Apply opacity if needed
+        if opacity < 1.0:
+            if resized_glass.shape[2] == 4:
+                overlay = resized_glass.copy()
+                overlay[:, :, 3] = (overlay[:, :, 3] * opacity).astype(np.uint8)
+            else:
+                overlay = np.zeros((*resized_glass.shape[:2], 4), dtype=np.uint8)
+                overlay[:, :, :3] = resized_glass
+                overlay[:, :, 3] = (255 * opacity).astype(np.uint8)
+        else:
+            overlay = resized_glass
         
-        # Current position (morphing)
-        current_x = int(source_x + (target_x - source_x) * self.transformation_progress)
-        current_y = int(source_y + (target_y - source_y) * self.transformation_progress)
-        
-        # Blend between bird and water glass
-        bird_opacity = 1.0 - self.transformation_progress
-        glass_opacity = self.transformation_progress
-        
-        # Draw bird (fading out)
-        if bird_opacity > 0.1:
-            resized_bird = self._get_resized_bird()
-            if resized_bird is not None:
-                if resized_bird.shape[2] == 4:
-                    overlay = resized_bird.copy()
-                    overlay[:, :, 3] = (overlay[:, :, 3] * bird_opacity).astype(np.uint8)
-                    frame = self._overlay_image_alpha(frame, overlay, current_x, current_y)
-                else:
-                    frame = self._overlay_image_alpha(frame, resized_bird, current_x, current_y)
-        
-        # Draw water glass (fading in)
-        if glass_opacity > 0.1:
-            resized_glass = self._get_resized_water_glass()
-            if resized_glass is not None:
-                if resized_glass.shape[2] == 4:
-                    overlay = resized_glass.copy()
-                    overlay[:, :, 3] = (overlay[:, :, 3] * glass_opacity).astype(np.uint8)
-                    frame = self._overlay_image_alpha(frame, overlay, current_x, current_y)
-                else:
-                    frame = self._overlay_image_alpha(frame, resized_glass, current_x, current_y)
-        
-        return frame
+        return self._overlay_image_alpha(frame, overlay, *self.target_object_pos)

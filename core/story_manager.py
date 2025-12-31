@@ -30,35 +30,9 @@ class StoryManager:
 
     def _init_steps(self) -> Dict[int, StoryStep]:
         return {
-            # Vera Verto briefing + practice
+            # Lumos briefing + practice
             1: StoryStep(
                 id=1,
-                title="Giới thiệu Vera Verto",
-                description=(
-                    "Chào mừng đến với lớp Biến hình! Bài học đầu tiên là Vera Verto - phép biến đổi vật thể. "
-                    "Để thực hiện phép này, bạn cần chạm đũa phép ba lần vào vật thể, sau đó chỉ đũa về phía nó "
-                    "và đọc to 'Vera Verto'. Một làn sương mờ sẽ bao phủ vật thể và biến đổi nó. "
-                    "Hãy nhớ: tư thế và chuyển động đũa phép rất quan trọng!"
-                ),
-                step_type=StoryStepType.EXPLANATION,
-                required_spell=SpellType.VERA_VERTO,
-                next_step_id=2,
-            ),
-            2: StoryStep(
-                id=2,
-                title="Thực hành Vera Verto",
-                description=(
-                    "Đã đến lúc thực hành! Trước mặt bạn có một vật thể cần được biến đổi. "
-                    "Chạm đũa phép ba lần vào vật thể, chỉ đũa về phía nó và nói 'Vera Verto' để bắt đầu phép biến đổi."
-                ),
-                step_type=StoryStepType.PRACTICE,
-                required_spell=SpellType.VERA_VERTO,
-                success_message="Tuyệt vời! Vật thể đã được biến đổi thành công với làn sương mờ và ánh sáng ma thuật!",
-                next_step_id=3,
-            ),
-            # Lumos briefing + practice
-            3: StoryStep(
-                id=3,
                 title="Giới thiệu Lumos",
                 description=(
                     "Bạn đứng trong hành lang bị bóng tối bao phủ. Bài học đầu tiên rất đơn giản: "
@@ -67,10 +41,10 @@ class StoryManager:
                 ),
                 step_type=StoryStepType.EXPLANATION,
                 required_spell=SpellType.LUMOS,
-                next_step_id=4,
+                next_step_id=2,
             ),
-            4: StoryStep(
-                id=4,
+            2: StoryStep(
+                id=2,
                 title="Thực hành Lumos",
                 description=(
                     "Đã đến lúc chuyển lý thuyết thành hành động. Hít thở đều đặn và nói 'Lumos' để thắp sáng con đường."
@@ -78,11 +52,11 @@ class StoryManager:
                 step_type=StoryStepType.PRACTICE,
                 required_spell=SpellType.LUMOS,
                 success_message="Tuyệt vời! Hành lang bừng sáng và một cánh cửa gỗ sồi hiện ra phía trước.",
-                next_step_id=5,
+                next_step_id=3,
             ),
             # Wingardium Leviosa briefing + practice
-            5: StoryStep(
-                id=5,
+            3: StoryStep(
+                id=3,
                 title="Bài học Bay lơ lửng",
                 description=(
                     "Ngay bên ngoài, một đống đá chặn đường của bạn. Bay lơ lửng là về sự cân bằng—chuyển động có kiểm soát, "
@@ -90,15 +64,41 @@ class StoryManager:
                 ),
                 step_type=StoryStepType.EXPLANATION,
                 required_spell=SpellType.WINGARDIUM_LEVIOSA,
-                next_step_id=6,
+                next_step_id=4,
             ),
-            6: StoryStep(
-                id=6,
+            4: StoryStep(
+                id=4,
                 title="Thực hành Wingardium Leviosa",
                 description="Nâng những viên đá lên cao bằng 'Wingardium Leviosa' và dọn sạch sân.",
                 step_type=StoryStepType.PRACTICE,
                 required_spell=SpellType.WINGARDIUM_LEVIOSA,
                 success_message="Những viên đá bay sang một bên một cách uyển chuyển. Sân đã được dọn sạch—hoàn thành bài tập!",
+                next_step_id=5,
+            ),
+            # Vera Verto briefing + practice
+            5: StoryStep(
+                id=5,
+                title="Giới thiệu Vera Verto",
+                description=(
+                    "Chào mừng đến với lớp Biến hình! Bài học này là Vera Verto - phép biến đổi vật thể. "
+                    "Để thực hiện phép này, bạn cần chạm đũa phép vào vật thể, sau đó chỉ đũa về phía nó "
+                    "và đọc to 'Vera Verto'. Một làn sương mờ sẽ bao phủ vật thể và biến đổi nó. "
+                    "Hãy nhớ: tư thế và chuyển động đũa phép rất quan trọng!"
+                ),
+                step_type=StoryStepType.EXPLANATION,
+                required_spell=SpellType.VERA_VERTO,
+                next_step_id=6,
+            ),
+            6: StoryStep(
+                id=6,
+                title="Thực hành Vera Verto",
+                description=(
+                    "Đã đến lúc thực hành! Trước mặt bạn có một vật thể cần được biến đổi. "
+                    "Chạm đũa phép vào vật thể, chỉ đũa về phía nó và nói 'Vera Verto' để bắt đầu phép biến đổi."
+                ),
+                step_type=StoryStepType.PRACTICE,
+                required_spell=SpellType.VERA_VERTO,
+                success_message="Tuyệt vời! Vật thể đã được biến đổi thành công với làn sương mờ và ánh sáng ma thuật!",
                 next_step_id=7,
             ),
             # Expecto Patronum briefing + practice
