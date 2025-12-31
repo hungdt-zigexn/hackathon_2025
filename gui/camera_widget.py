@@ -6,7 +6,7 @@ import numpy as np
 import os
 from PyQt6.QtWidgets import QLabel
 from PyQt6.QtCore import QThread, pyqtSignal, Qt
-from PyQt6.QtGui import QImage, QPixmap
+from PyQt6.QtGui import QImage, QPixmap, QPainter
 from core.hand_tracking import HandTracker
 from core.spell_engine import SpellEngine, SpellType
 from gui.wizard_hat_overlay import WizardHatOverlay
@@ -21,6 +21,7 @@ class CameraThread(QThread):
     
     def __init__(self, hand_tracker: HandTracker, spell_engine: SpellEngine):
         super().__init__()
+        self.setObjectName("CameraThread")  # Set thread name for debugging
         self.hand_tracker = hand_tracker
         self.spell_engine = spell_engine
         self.running = False
@@ -91,7 +92,10 @@ class CameraThread(QThread):
         self.running = False
         if self.cap:
             self.cap.release()
-        self.wait()
+        # Wait for thread to finish with timeout
+        if not self.wait(3000):  # 3 second timeout
+            self.terminate()  # Force termination if needed
+            self.wait()  # Wait again after termination
 
 
 class CameraWidget(QLabel):
@@ -101,8 +105,10 @@ class CameraWidget(QLabel):
     
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setMinimumSize(640, 480)
+        self.setMinimumSize(640, 360)  # Minimum height to prevent Qt resize issues
+        self.setMinimumHeight(360)      # Explicit minimum height
         self.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.setScaledContents(False)   # Don't scale content to fit
         self.setText("Camera not started")
         
         self.hand_tracker = HandTracker()
@@ -128,7 +134,7 @@ class CameraWidget(QLabel):
     def stop_camera(self):
         """Stop camera capture."""
         if self.camera_thread:
-            self.camera_thread.stop()
+            self.camera_thread.stop()  # This calls wait() internally
             self.camera_thread = None
     
     def update_frame(self, frame: np.ndarray):
@@ -147,11 +153,30 @@ class CameraWidget(QLabel):
             Qt.TransformationMode.SmoothTransformation
         )
         self.setPixmap(scaled_pixmap)
-    
+
+        # Ensure proper alignment (center the image)
+        self.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+    def paintEvent(self, event):
+        """Paint event with clipping to prevent overflow."""
+        painter = QPainter(self)
+
+        # 🚨 CRITICAL: Clip to widget rect to prevent overflow
+        painter.setClipRect(self.rect())
+
+        # Call parent paint event (handles QLabel pixmap drawing)
+        super().paintEvent(event)
+
     def get_spell_engine(self) -> SpellEngine:
         """Get the spell engine instance."""
         return self.spell_engine
     
+    def __del__(self):
+        """Destructor - ensure cleanup."""
+        self.stop_camera()
+        if hasattr(self, 'hand_tracker'):
+            self.hand_tracker.release()
+
     def closeEvent(self, event):
         """Clean up on close."""
         self.stop_camera()

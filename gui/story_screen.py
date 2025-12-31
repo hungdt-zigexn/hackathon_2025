@@ -99,27 +99,22 @@ class StoryScreen(QWidget):
 
         layout.addWidget(self.story_text)
         
-        # 📦 CAMERA + HUD CONTAINER – Keep them together
-        self.camera_hud_container = QWidget()
-        camera_hud_layout = QVBoxLayout(self.camera_hud_container)
-        camera_hud_layout.setSpacing(0)  # No spacing between camera and HUD
-        camera_hud_layout.setContentsMargins(0, 0, 0, 0)
-
-        # 🪞 CAMERA – Magic Mirror / Pensieve
+        # 🪞 CAMERA – Magic Mirror / Pensieve (100% gameplay)
         self.camera_widget = CameraWidget()
         self.camera_widget.setObjectName("CameraMirror")
         self.camera_widget.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
 
         # Removed spell_identified connection - patronus success now handled automatically
-        camera_hud_layout.addWidget(self.camera_widget, stretch=1)  # Camera expands within container
+        layout.addWidget(self.camera_widget, stretch=3)  # Camera gets priority space
 
-        # 🪄 SPELL HUD – Status + Mana Control Zone
+        # 🪄 SPELL HUD – Status + Mana Control Zone (completely below camera)
         self.spell_hud = QWidget()
         self.spell_hud.setObjectName("SpellHUD")
+        self.spell_hud.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum)
 
         hud_layout = QVBoxLayout(self.spell_hud)
         hud_layout.setSpacing(8)
-        hud_layout.setContentsMargins(12, 10, 12, 5)
+        hud_layout.setContentsMargins(16, 12, 16, 12)  # More padding
 
         # 🪄 STATUS BAR – Spell Aura
         self.status_label = QLabel("Hãy đọc phép thuật khi bạn sẵn sàng")
@@ -138,10 +133,7 @@ class StoryScreen(QWidget):
         self.progress_bar.setValue(0)
         hud_layout.addWidget(self.progress_bar)
 
-        camera_hud_layout.addWidget(self.spell_hud, stretch=0)  # HUD stays at bottom
-
-        # Add camera+HUD container to main layout
-        layout.addWidget(self.camera_hud_container, stretch=1)  # Container takes remaining space
+        layout.addWidget(self.spell_hud, stretch=0)  # HUD takes minimum space
         
         # 🧙 BUTTONS – Wizard Controls (styles now handled globally)
 
@@ -529,6 +521,14 @@ class StoryScreen(QWidget):
             self.voice_verifier.release()
             self.voice_verifier = None
         self.finished.emit()
+
+    def __del__(self):
+        """Destructor - ensure cleanup."""
+        try:
+            if hasattr(self, 'camera_widget') and self.camera_widget:
+                self.camera_widget.stop_camera()
+        except:
+            pass  # Ignore errors during destruction
 
     def closeEvent(self, event):
         self.exit_game()
