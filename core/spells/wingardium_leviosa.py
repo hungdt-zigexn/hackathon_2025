@@ -24,6 +24,7 @@ class WingardiumLeviosaSpell(BaseSpell):
         self._cached_resized_hammer = None
         self._cached_frame_size = (frame_width, frame_height)
         self._load_hammer()
+        self._ready_for_display = False
     
     def _load_hammer(self):
         """Load and prepare Thor hammer image."""
@@ -79,6 +80,7 @@ class WingardiumLeviosaSpell(BaseSpell):
         self.hover_offset = 0.0
         self.reached_target = False
         self.active = True
+        self._ready_for_display = True
         # Pre-cache resized hammer for better performance
         self._get_resized_hammer()
     
@@ -94,6 +96,7 @@ class WingardiumLeviosaSpell(BaseSpell):
         """Deactivate Wingardium Leviosa spell."""
         self.active = False
         self.state = 'idle'
+        self._ready_for_display = False
     
     def _to_pixel_coords(self, finger_pos: Optional[Tuple[float, float]]) -> Optional[Tuple[int, int]]:
         """Convert normalized finger position to pixel coordinates."""
@@ -162,7 +165,7 @@ class WingardiumLeviosaSpell(BaseSpell):
     
     def draw(self, frame: np.ndarray, finger_pos: Optional[Tuple[float, float]] = None) -> np.ndarray:
         """Draw Wingardium Leviosa object (Thor hammer)."""
-        if not self.active or not self.object_pos or self.hammer_image is None:
+        if (not self._ready_for_display and not self.active) or not self.object_pos or self.hammer_image is None:
             return frame
         
         x, y = int(self.object_pos[0]), int(self.object_pos[1])
