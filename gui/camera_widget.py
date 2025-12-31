@@ -80,7 +80,7 @@ class CameraThread(QThread):
             print(f"Warning: Could not initialize face detection: {e}")
             self.face_detection = None
         # Load wizard hat image
-        hat_path = os.path.join(os.getcwd(), "assets", "images", "wizard_hat.png")
+        hat_path = os.path.join(os.getcwd(), "assets", "images", "cute_wizard_hat.png")
         self.wizard_hat = cv2.imread(hat_path, cv2.IMREAD_UNCHANGED)
         if self.wizard_hat is None:
             print(f"Warning: Could not load wizard hat from {hat_path}")
